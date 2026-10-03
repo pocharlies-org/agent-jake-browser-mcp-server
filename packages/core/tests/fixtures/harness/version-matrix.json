@@ -1,0 +1,12 @@
+{
+  "_comment": "Fixed compatibility matrix for the negotiated wire. Same file is committed in the extension repo; edit both together (reviewed contract change). catalog: current|stale.",
+  "serverWireVersions": [1],
+  "cases": [
+    { "name": "new/new same version", "client": [1], "catalog": "current", "expect": "ack", "protocolVersion": 1 },
+    { "name": "maximum intersection (client offers a newer one too)", "client": [3, 2, 1], "catalog": "current", "expect": "ack", "protocolVersion": 1 },
+    { "name": "order independent", "client": [1, 2, 3], "catalog": "current", "expect": "ack", "protocolVersion": 1 },
+    { "name": "disjoint versions", "client": [2, 3], "catalog": "current", "expect": "reject", "code": "protocol_version_mismatch", "close": 4406 },
+    { "name": "catalog mismatch", "client": [1], "catalog": "stale", "expect": "reject", "code": "catalog_version_mismatch", "close": 4406 },
+    { "name": "disjoint AND stale catalog", "client": [2], "catalog": "stale", "expect": "reject", "code": "protocol_version_mismatch", "close": 4406 }
+  ]
+}
