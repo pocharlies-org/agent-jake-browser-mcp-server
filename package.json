@@ -37,6 +37,7 @@
   },
   "private": true,
   "workspaces": [
+    "packages/protocol",
     "packages/core",
     "packages/house-staticduo",
     "packages/house-pocharlies"
