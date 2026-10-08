@@ -1,6 +1,8 @@
 # Browser Harness negotiated wire contract (v2)
 
-Status: **active, experimental package `0.1.0`**. Supersedes `browser-harness-v1.md` (deprecated, untouched).
+Status: **deprecated (INFRA-721)**, superseded by [`browser-harness-v3.md`](browser-harness-v3.md), which adds two tools and
+therefore a new catalog digest. This document and its catalog (`TOOL_CATALOG_V2`, digest below) are kept unchanged.
+Supersedes `browser-harness-v1.md` (deprecated, untouched).
 Source of truth for every schema below: `packages/protocol` (`@agent-jake-browser/protocol`). This document
 explains it; it never defines a second copy. Design: `docs/superpowers/specs/2026-10-01-browser-harness-m1b-design.md`.
 
