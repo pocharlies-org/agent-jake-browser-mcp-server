@@ -19,7 +19,6 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - run: npm run test:contract
       - name: Core without houses (D2)
         run: |
           if grep -rEn 'house-pocharlies|house-staticduo|op-safe' packages/core packages/protocol --exclude-dir=node_modules --exclude-dir=dist --exclude=layering.test.ts; then exit 1; fi
@@ -33,4 +32,34 @@ jobs:
           test -f dist/index.js
           test -f dist/http-server.js
           node dist/index.js --help
-
+  # INFRA-390 (M5). The wire/version contract tests, plus the two checks that need the extension's vendored artifact.
+  # Paired PRs use the same branch name in both repos: the extension side is that branch if it exists, else master.
+  contract:
+    runs-on: arc-k8s
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pick the extension ref
+        id: ext
+        run: |
+          b="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          if git ls-remote --exit-code --heads https://github.com/pocharlies-org/agent-jake-browser-mcp-extension.git "$b" >/dev/null; then ref="$b"; else ref=master; fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: pocharlies-org/agent-jake-browser-mcp-extension
+          ref: ${{ steps.ext.outputs.ref }}
+          path: extension
+          sparse-checkout: vendor/protocol
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:contract
+      - name: Version matrix identical in both repos
+        run: cmp extension/vendor/protocol/version-matrix.json packages/core/tests/fixtures/harness/version-matrix.json
+      - name: Vendored protocol artifact equals the pack of this source
+        run: |
+          node packages/protocol/tools/pack.mjs "$RUNNER_TEMP/protocol-pack"
+          node packages/protocol/tools/compare.mjs extension/vendor/protocol/agent-jake-browser-protocol.tgz extension/vendor/protocol/provenance.json "$RUNNER_TEMP/protocol-pack/agent-jake-browser-protocol.tgz" "$RUNNER_TEMP/protocol-pack/provenance.json"
