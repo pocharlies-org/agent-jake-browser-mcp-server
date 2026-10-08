@@ -44,12 +44,22 @@ sesión MCP; el core no elige por «último usado» en el endpoint negociado. La
 
 ## 6. Tests
 
-`npm test` (incluye build), `npm run test:contract` (wire legacy + negociado + matriz de versiones),
+`npm test` (incluye build), `npm run test:contract` (wire legacy + negociado + matriz de versiones + capas),
 `npm run typecheck`. Los tests legacy no se editan; los del wire negociado van al lado.
+
+Contrato de versión (INFRA-390): **una sola matriz**, `packages/core/tests/fixtures/harness/version-matrix.json`, idéntica
+byte a byte a `vendor/protocol/version-matrix.json` de la extensión (`cases` = vista servidor, `extensionView` = vista
+extensión, `artifactView` = el tgz vendorizado frente al pack de este código). `packages/protocol/tools/compare.mjs`
+compara por contenido el tgz vendorizado con el pack de `packages/protocol` (lo que `verify.mjs` no ve: un tgz
+alterado pero coherente consigo mismo). `layering.test.ts` también fija que `packages/protocol` es el único sitio de
+esquemas: los que `core` aún tiene (hasta M1B.3) están listados y ninguno crece ni aparece uno nuevo.
 
 ## 7. CI/CD
 
 `.github/workflows/ci.yml` en runners **`arc-k8s`** (regla ci-runners-arc). Sin despliegue desde este repo.
+El job `contract` ejecuta `test:contract` y, con la extensión (`vendor/protocol`) en checkout, la igualdad de la matriz y
+`compare.mjs`. La extensión es la rama del mismo nombre si existe (PRs apareadas) o `master`: un cambio de protocolo
+sube a ambos repos con el mismo nombre de rama, y la extensión se re-vendoriza desde un commit del servidor.
 
 ## 8. Trampas
 

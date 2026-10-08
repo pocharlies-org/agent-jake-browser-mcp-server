@@ -1,15 +1,18 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // @ts-expect-error plain ESM tool without types
+import { compareArtifacts } from '../tools/compare.mjs';
+// @ts-expect-error plain ESM tool without types
 import { verifyArtifact } from '../tools/verify.mjs';
 
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
+const matrix = JSON.parse(readFileSync(join(pkgDir, '../core/tests/fixtures/harness/version-matrix.json'), 'utf8'));
 let work: string;
 let good: { tgz: string; provenance: string };
 
@@ -27,6 +30,11 @@ function tampered(name: string, mutate: (root: string) => void, rehash = true) {
   writeFileSync(provenance, JSON.stringify(prov));
   return { tgz, provenance };
 }
+
+const alterDescriptor = (root: string) => {
+  const f = join(root, 'dist/index.js');
+  writeFileSync(f, readFileSync(f, 'utf8').replace(/"browser_click"|'browser_click'/, '"browser_clack"'));
+};
 
 beforeAll(() => {
   work = mkdtempSync(join(tmpdir(), 'ajb-artifact-test-'));
@@ -48,10 +56,7 @@ describe('vendored artifact verification (offline)', () => {
     expect(pkg.browserHarnessProtocol.catalogVersion).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
   it('fails when descriptors are manipulated (hash consistent, digest not)', async () => {
-    const t = tampered('descriptors', (root) => {
-      const f = join(root, 'dist/index.js');
-      writeFileSync(f, readFileSync(f, 'utf8').replace(/"browser_click"|'browser_click'/, '"browser_clack"'));
-    });
+    const t = tampered('descriptors', alterDescriptor);
     const r = await verifyArtifact(t);
     expect(r.ok).toBe(false);
     expect(r.errors.join('\n')).toMatch(/differs from packed descriptors/);
@@ -86,5 +91,31 @@ describe('vendored artifact verification (offline)', () => {
     writeFileSync(p, JSON.stringify(prov));
     const r = await verifyArtifact({ tgz: good.tgz, provenance: p });
     expect(r.ok).toBe(false);
+  });
+});
+
+/** How the extension's vendored copy is altered, by the `mutate` name used in version-matrix.json#artifactView. */
+const mutations: Record<string, () => { tgz: string; provenance: string }> = {
+  none: () => good,
+  descriptors: () => tampered('m-descriptors', alterDescriptor),
+  code: () => tampered('m-code', (root) => appendFileSync(join(root, 'dist/index.js'), '\n// altered\n')),
+  'wire-versions': () => {
+    const prov = { ...JSON.parse(readFileSync(good.provenance, 'utf8')), supportedProtocolVersions: [1, 2] };
+    const provenance = join(work, 'm-wire-versions.json');
+    writeFileSync(provenance, JSON.stringify(prov));
+    return { tgz: good.tgz, provenance };
+  },
+};
+
+describe('vendored artifact equals the pack of this source (version matrix artifactView)', () => {
+  it.each(matrix.artifactView)('$name', async ({ mutate, expect: want }: { mutate: string; expect: string }) => {
+    const r = await compareArtifacts({ vendored: mutations[mutate](), source: good });
+    expect(r.ok).toBe(want === 'match');
+  });
+  it('a forged but self-consistent tgz passes verify and only the comparison catches it', async () => {
+    const forged = mutations.code();
+    expect(await verifyArtifact(forged)).toEqual({ ok: true, errors: [] });
+    const r = await compareArtifacts({ vendored: forged, source: good });
+    expect(r.errors.join('\n')).toMatch(/differs from the pack of this source[\s\S]*dist\/index\.js/);
   });
 });
