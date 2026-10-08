@@ -2,15 +2,14 @@
  * browser_fill_secret: the secret is read on the server, typed through browser_type with the `secret` flag, and never
  * shows up in the result, in an error, in a log line or in the transcript of the negotiated endpoint.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHarnessServer, type HarnessServer } from '../src/harness-server.js';
 import { callToolViaHarness } from '../src/harness-routing.js';
 import { getAllTools } from '../src/tools/index.js';
 import { fakeContext, isError, resultText } from './fake-context.js';
-import { TOKEN, ready, type TestClient } from './harness-helpers.js';
+import { useHarness } from './harness-fixture.js';
 
 const SECRET = 'hunter2-Sup3r$ecret';
 const tool = getAllTools().find((x) => x.schema.name === 'browser_fill_secret')!;
@@ -115,23 +114,7 @@ describe('browser_fill_secret', () => {
 });
 
 describe('browser_fill_secret on the negotiated endpoint', () => {
-  let harness: HarnessServer;
-  let port: number;
-  const open: TestClient[] = [];
-  const prevToken = process.env.BROWSER_WS_TOKEN;
-
-  beforeAll(async () => {
-    process.env.BROWSER_WS_TOKEN = TOKEN;
-    harness = createHarnessServer({ port: 0, house: 'house-a' });
-    await harness.listening;
-    port = harness.port();
-  });
-  afterAll(async () => {
-    for (const c of open.splice(0)) c.close();
-    await harness.close();
-    if (prevToken === undefined) delete process.env.BROWSER_WS_TOKEN;
-    else process.env.BROWSER_WS_TOKEN = prevToken;
-  });
+  const fixture = useHarness();
 
   it('the browser gets browser_type with the flag; the MCP result, the server log and stderr never hold the secret', async () => {
     await fakeOp(`printf '%s\\n' '${SECRET}'`);
@@ -143,9 +126,8 @@ describe('browser_fill_secret on the negotiated endpoint', () => {
       vi.spyOn(console, m).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
     }
 
-    const { client, ack } = await ready(port, { installationId: 'inst-secret' });
-    open.push(client);
-    const call = callToolViaHarness(harness, tool, 'browser_fill_secret', { selector: '#pw', secretRef: 'op://Private/item/password' }, { sessionId: 's-secret' });
+    const { client, ack } = await fixture.browser({ installationId: 'inst-secret' });
+    const call = callToolViaHarness(fixture.harness(), tool, 'browser_fill_secret', { selector: '#pw', secretRef: 'op://Private/item/password' }, { sessionId: 's-secret' });
     const req = await client.next();
     expect(req).toMatchObject({ type: 'tool_request', tool: 'browser_type', args: { selector: '#pw', text: SECRET, secret: true } });
     client.send({ type: 'tool_result', id: req.id, sessionId: req.sessionId, connectionId: ack.connectionId, house: ack.house, ok: true, data: { typed: SECRET, cleared: true } });
@@ -154,6 +136,6 @@ describe('browser_fill_secret on the negotiated endpoint', () => {
     expect(isError(r)).toBe(false);
     expect(JSON.stringify(r)).not.toContain(SECRET);
     expect(lines.join('\n')).not.toContain(SECRET);
-    harness.broker.closeSession('s-secret');
+    fixture.harness().broker.closeSession('s-secret');
   });
 });

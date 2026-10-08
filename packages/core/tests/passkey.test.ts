@@ -2,13 +2,12 @@
  * browser_passkey: mode and target reach the extension, the result reports the ceremony without key material (the
  * extension never sends it), and every way the extension can fall short is an error, never a silent plain click.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createHarnessServer, type HarnessServer } from '../src/harness-server.js';
+import { describe, expect, it } from 'vitest';
 import { callToolViaHarness } from '../src/harness-routing.js';
 import { getAllTools } from '../src/tools/index.js';
 import type { Context, ExtensionResponse } from '../src/types.js';
 import { fakeContext, isError, resultText as text } from './fake-context.js';
-import { TOKEN, ready, type TestClient } from './harness-helpers.js';
+import { useHarness } from './harness-fixture.js';
 
 const tool = getAllTools().find((x) => x.schema.name === 'browser_passkey')!;
 const click = getAllTools().find((x) => x.schema.name === 'browser_click')!;
@@ -80,43 +79,26 @@ describe('browser_passkey', () => {
 });
 
 describe('browser_passkey on the negotiated endpoint is gated by the `passkey` capability', () => {
-  let harness: HarnessServer;
-  let port: number;
-  const open: TestClient[] = [];
-  const prevToken = process.env.BROWSER_WS_TOKEN;
-  beforeAll(async () => {
-    process.env.BROWSER_WS_TOKEN = TOKEN;
-    harness = createHarnessServer({ port: 0, house: 'house-a' });
-    await harness.listening;
-    port = harness.port();
-  });
-  afterAll(async () => {
-    for (const c of open.splice(0)) c.close();
-    await harness.close();
-    if (prevToken === undefined) delete process.env.BROWSER_WS_TOKEN;
-    else process.env.BROWSER_WS_TOKEN = prevToken;
-  });
+  const fixture = useHarness();
 
   it('an extension that did not offer it gets nothing and the caller reads capability_unavailable', async () => {
-    const { client } = await ready(port, { installationId: 'inst-old', capabilities: [] });
-    open.push(client);
-    const r = await callToolViaHarness(harness, tool, 'browser_passkey', { ref: 'e3', mode: 'use' }, { sessionId: 's-old' });
+    const { client } = await fixture.browser({ installationId: 'inst-old', capabilities: [] });
+    const r = await callToolViaHarness(fixture.harness(), tool, 'browser_passkey', { ref: 'e3', mode: 'use' }, { sessionId: 's-old' });
     expect(isError(r)).toBe(true);
     expect(text(r)).toMatch(/^capability_unavailable:/);
     expect(client.frames).toEqual([]);
-    harness.broker.closeSession('s-old');
+    fixture.harness().broker.closeSession('s-old');
     client.close();
   });
 
   it('an extension that offered it receives the request', async () => {
-    const { client, ack } = await ready(port, { installationId: 'inst-new', capabilities: ['passkey'] });
-    open.push(client);
-    const call = callToolViaHarness(harness, tool, 'browser_passkey', { ref: 'e3', mode: 'use' }, { sessionId: 's-new' });
+    const { client, ack } = await fixture.browser({ installationId: 'inst-new', capabilities: ['passkey'] });
+    const call = callToolViaHarness(fixture.harness(), tool, 'browser_passkey', { ref: 'e3', mode: 'use' }, { sessionId: 's-new' });
     const req = await client.next();
     expect(req).toMatchObject({ type: 'tool_request', tool: 'browser_passkey', args: { ref: 'e3', mode: 'use' } });
     client.send({ type: 'tool_result', id: req.id, sessionId: req.sessionId, connectionId: ack.connectionId, house: ack.house, ok: true, data: shopify() });
     expect(text(await call)).toContain('Signed in with the agent passkey');
-    harness.broker.closeSession('s-new');
+    fixture.harness().broker.closeSession('s-new');
     client.close();
   });
 });
