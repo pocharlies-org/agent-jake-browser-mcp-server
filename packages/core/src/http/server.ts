@@ -17,6 +17,8 @@ import { getSharedTokenStore } from '../token-store.js';
 import { createPairingStore } from '../pairing-store.js';
 import { patchZipConfig } from '../extension-zip.js';
 import { createHarnessServer, type HarnessServer, type HarnessServerOptions } from '../harness-server.js';
+import { extensionZipPath, readPublishedVersion } from '../published-extension.js';
+import { findConnection, nameOf, parseLabels, resolveTarget } from '../connection-target.js';
 import { callToolViaHarness } from '../harness-routing.js';
 
 
@@ -25,7 +27,13 @@ export interface HttpServerOptions {
   wsPort?: number;
   host?: string;
   extensionZip?: string;
+  /** Folder where the extension CI publishes `latest.json` and its zip. Default: BROWSER_EXTENSION_DIR or /data/extension. */
+  extensionDir?: string;
   wsPath?: string;
+  /** connectionId -> friendly name. Default: AGENT_BROWSER_CONNECTION_LABELS (JSON). */
+  connectionLabels?: Record<string, string>;
+  /** Browser (id or name) a session uses until it chooses one. Default: AGENT_BROWSER_DEFAULT_CONNECTION. Legacy endpoint only. */
+  defaultConnection?: string;
   /**
    * Negotiated endpoint (/ws/harness). Opt-in: when set, MCP tool calls are routed ONLY to browsers that completed
    * the authenticated hello, bound per MCP session. Legacy WS stays as configured; nothing falls back between them.
@@ -54,14 +62,24 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
   const PORT = options.port ?? Number(process.env.MCP_HTTP_PORT || 8000);
   const WS_PORT = options.wsPort ?? Number(process.env.BROWSER_WS_PORT || 8765);
   const HTTP_HOST = options.host ?? (process.env.MCP_HTTP_HOST || '127.0.0.1');
-  const EXTENSION_ZIP =
-    options.extensionZip ?? (process.env.BROWSER_EXTENSION_ZIP || '/app/extension/agent-jake-browser-extension.zip');
+  const EXTENSION_DIR = options.extensionDir ?? (process.env.BROWSER_EXTENSION_DIR || '/data/extension');
+  // The published zip appears while the server runs, so the path is resolved per request.
+  const extensionZip = () =>
+    options.extensionZip ?? extensionZipPath(process.env, EXTENSION_DIR);
   const WS_PATH = options.wsPath ?? (process.env.BROWSER_WS_PATH || '/');
 
+  // Browser choice per MCP session on the LEGACY endpoint (connection-target.ts). The negotiated endpoint binds through
+  // the SessionBroker and ignores these: its connection ids are server-issued and a browser's label is only its own claim.
+  const CONNECTION_LABELS = options.connectionLabels ?? parseLabels(process.env.AGENT_BROWSER_CONNECTION_LABELS);
+  const DEFAULT_CONNECTION = (options.defaultConnection ?? process.env.AGENT_BROWSER_DEFAULT_CONNECTION ?? '').trim() || undefined;
+  const sessionDefaults = new Map<string, string>();
+  // Nothing configured: the field keeps its legacy wording and the legacy rule (single browser, else most recently used).
   const CONNECTION_FIELD = {
     type: 'string',
     description:
-      'Browser connection id to target; defaults to the most recently used. See browser_list_connections.',
+      DEFAULT_CONNECTION || Object.keys(CONNECTION_LABELS).length
+        ? 'Browser to drive: a connection id or its name (e.g. "mac", "x86"). Once given, it sticks for the rest of this MCP session. Without it: this session\'s choice, else the configured default. See browser_list_connections.'
+        : 'Browser connection id to target; defaults to the most recently used. See browser_list_connections.',
   };
 
   const app = express();
@@ -113,6 +131,8 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
     return allTools.map((tool) => annotateToolSchema(tool.schema));
   }
 
+  const openConnections = () => context.listConnections().filter((c) => c.open !== false);
+
   function textContent(text: string, isError = false): ToolResult {
     const result: ToolResult = { content: [{ type: 'text', text }] };
     if (isError) result.isError = true;
@@ -142,24 +162,31 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
       });
     }
 
+    const sessionId = extra?.sessionId;
     const args = { ...(rawArgs ?? {}) };
-    const connection =
+    const requested =
       typeof args.connection === 'string' && args.connection.trim() ? args.connection.trim() : undefined;
     delete args.connection;
+
+    if (name === 'browser_list_connections') {
+      const mine = sessionId ? sessionDefaults.get(sessionId) : undefined;
+      // The legacy rows plus how this deployment names them.
+      const rows = context.listConnections().map((c) => ({
+        ...c,
+        name: nameOf(c, CONNECTION_LABELS) || null,
+        thisSession: c.connectionId === mine,
+        configuredDefault:
+          !!DEFAULT_CONNECTION &&
+          [c.connectionId, nameOf(c, CONNECTION_LABELS)].some((v) => v && v.toLowerCase() === DEFAULT_CONNECTION.toLowerCase()),
+      }));
+      return textContent(JSON.stringify(rows, null, 2));
+    }
 
     if (tool.serverSide) {
       return tool.handle(context, args);
     }
 
-    if (connection && !context.isConnected(connection)) {
-      const open = context.listConnections().map((c) => c.connectionId).join(', ') || 'none';
-      return textContent(
-        `No browser connection with id "${connection}" (open: ${open}). Call browser_list_connections to see the current ones.`,
-        true,
-      );
-    }
-
-    if (!context.isConnected(connection)) {
+    if (!requested && !openConnections().length) {
       try {
         await context.waitForConnection(10000);
       } catch {
@@ -170,7 +197,19 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
       }
     }
 
-    return tool.handle(context.forConnection(connection), args);
+    // The choice belongs to this MCP session: explicit pick, else its own earlier pick, else the configured default.
+    const target = resolveTarget({
+      requested,
+      sessionDefault: sessionId ? sessionDefaults.get(sessionId) : undefined,
+      configuredDefault: DEFAULT_CONNECTION,
+      lastUsed: DEFAULT_CONNECTION ? undefined : (context.wsServer.registry.lastUsedConnectionId ?? undefined),
+      open: openConnections(),
+      labels: CONNECTION_LABELS,
+    });
+    if (!target.ok) return textContent(target.error, true);
+    if (target.sticky && sessionId) sessionDefaults.set(sessionId, target.connectionId);
+
+    return tool.handle(context.forConnection(target.connectionId), args);
   }
 
   function createMcpServer() {
@@ -287,7 +326,17 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
     return patched.buffer;
   }
 
+  // The newest published build, for the installed extensions' update check (startup + every 30 min).
+  app.get('/download/latest.json', (_req, res) => {
+    const latest = readPublishedVersion(EXTENSION_DIR);
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (!latest) return res.status(404).json({ error: 'no extension build published on this server' });
+    return res.json({ ...latest, download: '/download' });
+  });
+
   app.get('/download', async (_req, res) => {
+    const EXTENSION_ZIP = extensionZip();
     try {
       const info = await stat(EXTENSION_ZIP);
       const wsUrl = (process.env.BROWSER_PUBLIC_WS_URL || '').trim();
@@ -453,6 +502,7 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
           if (transport.sessionId) {
             transports.delete(transport.sessionId);
             servers.delete(transport.sessionId);
+            sessionDefaults.delete(transport.sessionId);
             owners.delete(transport.sessionId);
             harness?.broker.closeSession(transport.sessionId);
           }
@@ -493,6 +543,7 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
     }
     await transport.handleRequest(req, res, req.body);
     // DELETE is the logical end of the session. An SSE stream ending is not.
+    if (sessionId) sessionDefaults.delete(sessionId);
     if (harness && sessionId) {
       owners.delete(sessionId);
       harness.broker.closeSession(sessionId);
@@ -516,7 +567,7 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
       });
       console.error(`Agent Jake Browser MCP HTTP endpoint on ${HTTP_HOST}:${PORT}/mcp`);
       console.error(`Agent Jake Browser extension WebSocket on ${process.env.BROWSER_WS_HOST || '127.0.0.1'}:${WS_PORT}`);
-      console.error(`Extension download: ${EXTENSION_ZIP} (served at /download)`);
+      console.error(`Extension download: ${extensionZip()} (served at /download, version at /download/latest.json)`);
       return listener;
     },
     async close() {

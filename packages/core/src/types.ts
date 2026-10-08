@@ -51,7 +51,9 @@ export type ToolName =
   | 'browser_network_request'
   | 'browser_cdp'
   | 'browser_drop'
-  | 'browser_fill_form';
+  | 'browser_fill_form'
+  // Passkeys (needs the extension's `passkey` capability)
+  | 'browser_passkey';
 
 /**
  * Message sent to the extension via WebSocket.
