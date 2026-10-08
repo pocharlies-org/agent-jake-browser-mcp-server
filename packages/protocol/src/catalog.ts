@@ -4,14 +4,14 @@ export type ToolRisk = 'read' | 'write' | 'dangerous';
 /** `tab`: acts on a tab target; `tabless`: no tab; `creates`: creates a tab (returns a handle). */
 export type TabScope = 'tab' | 'tabless' | 'creates';
 
-/** JSON-serializable metadata only. Argument/result schemas are extracted here in M1B.3. */
+/** JSON-serializable metadata only. Argument/result schemas are extracted here in M1B.3 (new ones already live in tool-args.ts). */
 export interface ToolDescriptor {
   readonly name: string;
   readonly risk: ToolRisk;
   readonly tabScope: TabScope;
   /** Opaque capability name a client must have negotiated; absent = always available. */
   readonly capability?: string;
-  /** Answered by the server without a browser. */
+  /** Handled in the server process: never forwarded to the extension under its own name (so it has no extension handler). */
   readonly serverSide?: boolean;
 }
 
@@ -22,7 +22,11 @@ const d = (
   extra: { capability?: string; serverSide?: boolean } = {},
 ): ToolDescriptor => Object.freeze({ name, risk, tabScope, ...extra });
 
-export const TOOL_CATALOG: readonly ToolDescriptor[] = Object.freeze([
+/**
+ * Catalog of `docs/contracts/browser-harness-v2.md`. FROZEN: never edited. A change to the tool set is a new catalog
+ * next to this one (`TOOL_CATALOG`, contract v3); `CATALOG_VERSION_V2` stays pinned by a test.
+ */
+export const TOOL_CATALOG_V2: readonly ToolDescriptor[] = Object.freeze([
   d('browser_navigate', 'write', 'tab'),
   d('browser_go_back', 'write', 'tab'),
   d('browser_go_forward', 'write', 'tab'),
@@ -65,6 +69,14 @@ export const TOOL_CATALOG: readonly ToolDescriptor[] = Object.freeze([
   d('browser_list_connections', 'read', 'tabless', { serverSide: true }),
 ]);
 
+/** Catalog of `docs/contracts/browser-harness-v3.md` (INFRA-721): v2 unchanged plus what production already ran. */
+export const TOOL_CATALOG: readonly ToolDescriptor[] = Object.freeze([
+  ...TOOL_CATALOG_V2,
+  // Reads a 1Password reference in the server process, then types it with browser_type: the extension never sees this name.
+  d('browser_fill_secret', 'dangerous', 'tab', { serverSide: true }),
+  d('browser_passkey', 'dangerous', 'tab', { capability: 'passkey' }),
+]);
+
 export const TOOL_NAMES: readonly string[] = Object.freeze(TOOL_CATALOG.map((t) => t.name));
 
 /** Recursively sorted keys, array order kept, no whitespace. Pure and deterministic. */
@@ -84,3 +96,6 @@ export function computeCatalogDigest(descriptors: readonly ToolDescriptor[] = TO
 
 /** Build-produced digest of this package's own catalog. */
 export const CATALOG_VERSION: string = computeCatalogDigest();
+
+/** Digest of the frozen v2 catalog: a client that vendored it is rejected with `catalog_version_mismatch`. */
+export const CATALOG_VERSION_V2: string = computeCatalogDigest(TOOL_CATALOG_V2);

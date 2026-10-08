@@ -5,6 +5,9 @@ import { z } from 'zod';
 import { constants } from 'node:fs';
 import { lstat, open, type FileHandle } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { FILL_SECRET_ARGS, PASSKEY_ARGS } from '@agent-jake-browser/protocol';
 import { openPinnedDirectory, pinnedChildPath } from './pinned-directory.js';
 import { createTool, textResult, errorResult } from './types.js';
 import type { Tool } from '../types.js';
@@ -45,6 +48,16 @@ export const clickTool: Tool = createTool({
     return textResult(`Clicked on ${params.ref ?? params.selector}`);
   },
 });
+
+/**
+ * The extension checks the field after typing and reports a length mismatch as `warning`
+ * (lengths only, never the value). Without surfacing it, a type that never reached the page
+ * (a hidden tab, a field that lost focus) came back as a plain success.
+ */
+function fieldWarning(result: unknown): string | undefined {
+  const warning = (result as { warning?: unknown } | undefined)?.warning;
+  return typeof warning === 'string' && warning ? warning : undefined;
+}
 
 /**
  * Type text into an element.
@@ -366,6 +379,108 @@ export const fillFormTool: Tool = createTool({
   },
 });
 
+/**
+ * Read a secret from 1Password ON THE SERVER MACHINE and return it. The value never reaches the model: it is not in
+ * the tool arguments, the result or the server log. The reader is `op read <ref>`; AGENT_BROWSER_OP_BIN points to
+ * another executable with the same contract (the deployment's wrapper chooses the 1Password backend).
+ */
+export async function readSecret(ref: string): Promise<string> {
+  const bin = process.env.AGENT_BROWSER_OP_BIN || 'op';
+  const { stdout } = await promisify(execFile)(bin, ['read', ref], { timeout: 60000, maxBuffer: 64 * 1024 });
+  return stdout.replace(/\r?\n$/, '');
+}
+
+/** Whatever the extension says back may echo what it typed: the secret never leaves this function inside a message. */
+const without = (secret: string, text: string) => text.split(secret).join('[secret]');
+
+export const fillSecretTool: Tool = createTool({
+  name: 'browser_fill_secret',
+  description: 'Type a secret from 1Password (op://vault/item/field) into a field. The value is read on the server machine and never appears in arguments, results or logs. Use it for passwords AND for 2FA/TOTP codes (Google 2-Step Verification included), never browser_type. TOTP: reference the OTP field of the item BY ITS FIELD ID with ?attribute=otp (op://vault/item/TOTP_xxxx?attribute=otp) and it types the current 6-digit code. The field label changes with the app language ("one-time password", "contraseña de un solo uso") and accented labels do not resolve. Without ?attribute=otp it would type the otpauth:// seed.',
+  schema: FILL_SECRET_ARGS,
+  async handle(context, params) {
+    let value: string;
+    try {
+      value = await readSecret(params.secretRef);
+    } catch (err) {
+      // Exit code and stderr only: op never prints the secret there, and stdout is never shown.
+      const e = err as { code?: string | number; stderr?: string };
+      const why = [e.code, (e.stderr ?? '').trim().slice(0, 300)].filter(Boolean).join(': ');
+      return errorResult(`Could not read ${params.secretRef}${why ? ` (${why})` : ''}. Is 1Password reachable from the server?`);
+    }
+    if (!value) return errorResult(`Empty secret at ${params.secretRef}`);
+    const response = await context.send('browser_type', {
+      ref: params.ref,
+      selector: params.selector,
+      text: value,
+      clear: params.clear,
+      // The extension keeps the text out of its activity log when this is set.
+      secret: true,
+    });
+    if (!response.success) {
+      return errorResult(without(value, response.error?.message ?? 'Fill secret failed'));
+    }
+    const warning = fieldWarning(response.result);
+    if (warning) {
+      // An error, not a success with a note: submitting a field that did not get the secret
+      // (a 2FA code above all) burns an attempt.
+      return errorResult(`Did not fill ${params.ref ?? params.selector} as expected: ${without(value, warning)}. Check the field and fill it again before submitting.`);
+    }
+    return textResult(`Filled ${params.ref ?? params.selector} with ${params.secretRef} (${value.length} chars)`);
+  },
+});
+
+/** What the extension reports about a passkey ceremony: never the key nor the user handle. */
+interface PasskeyOutcome {
+  mode: 'enroll' | 'use';
+  host: string;
+  ceremony: 'completed' | 'timeout';
+  passkeys: Array<{ rpId: string; enrolledAt: string }>;
+  guardRestored?: false;
+}
+
+export function describePasskey(p: PasskeyOutcome): string {
+  const which = p.passkeys.map((k) => k.rpId).join(', ') || 'none';
+  if (p.ceremony === 'timeout') {
+    return `Passkey ${p.mode} on ${p.host}: the site asked for no passkey within the wait (passkeys for this host: ${which}).`;
+  }
+  return p.mode === 'enroll'
+    ? `Passkey enrolled on ${p.host} (rpId ${which}).`
+    : `Signed in with the agent passkey for ${which} on ${p.host}.`;
+}
+
+/**
+ * Clicks the element that starts a passkey ceremony. The extension lifts its WebAuthn guard for that ceremony only,
+ * with the agent's own passkey for the tab host, and reports it without key material. Every way the extension can
+ * fall short is an error, never a silent plain click.
+ */
+export const passkeyTool: Tool = createTool({
+  name: 'browser_passkey',
+  description: 'Sign in to a site with a passkey, or give the agent a passkey for it. Agent tabs refuse every WebAuthn request; this clicks the element that starts ONE passkey ceremony and lifts that refusal only while it lasts. mode "use": click the site\'s "sign in with passkey" button and the agent\'s own passkey for that host signs in. mode "enroll": signed in, click the site\'s "add a passkey" button and the site creates the agent\'s passkey for that host (once per site). The key stays in the browser extension and never reaches this result. Waits up to 20 s for the site to ask.',
+  schema: PASSKEY_ARGS,
+  async handle(context, params) {
+    const response = await context.send('browser_passkey', {
+      ref: params.ref,
+      selector: params.selector,
+      mode: params.mode,
+    });
+    if (!response.success) {
+      const message = response.error?.message ?? 'Passkey click failed';
+      return errorResult(/Unknown tool/.test(message)
+        ? 'This build of the browser extension does not support passkeys (browser_passkey). Nothing was clicked.'
+        : message);
+    }
+    const passkey = (response.result as { passkey?: PasskeyOutcome } | undefined)?.passkey;
+    if (!passkey) {
+      return errorResult('The browser extension answered without a passkey report: it is too old for browser_passkey. Nothing was signed.');
+    }
+    const report = `Clicked on ${params.ref ?? params.selector}. ${describePasskey(passkey)}`;
+    if (passkey.guardRestored === false) {
+      return errorResult(`${report} The WebAuthn guard could not be put back on this tab: close it (browser_close_tab) before visiting any other site.`);
+    }
+    return textResult(report);
+  },
+});
+
 export const interactionTools: Tool[] = [
   clickTool,
   typeTool,
@@ -376,4 +491,6 @@ export const interactionTools: Tool[] = [
   uploadFileTool,
   dropTool,
   fillFormTool,
+  fillSecretTool,
+  passkeyTool,
 ];

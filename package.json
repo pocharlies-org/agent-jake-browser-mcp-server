@@ -16,7 +16,7 @@
     "test:e2e": "playwright test",
     "typecheck": "npm run typecheck --workspaces && tsc --noEmit",
     "pretest": "npm run build",
-    "test:contract": "vitest run tests/entrypoints.test.ts packages/core/tests/http-routes.test.ts packages/core/tests/wire-contract.test.ts packages/core/tests/harness-wire.test.ts packages/core/tests/harness-session.test.ts packages/core/tests/harness-http.test.ts packages/core/tests/layering.test.ts packages/protocol/tests"
+    "test:contract": "vitest run tests/entrypoints.test.ts packages/core/tests/http-routes.test.ts packages/core/tests/wire-contract.test.ts packages/core/tests/harness-wire.test.ts packages/core/tests/harness-session.test.ts packages/core/tests/harness-http.test.ts packages/core/tests/layering.test.ts packages/core/tests/connection-target.test.ts packages/core/tests/connection-routing.test.ts packages/core/tests/fill-secret.test.ts packages/core/tests/passkey.test.ts packages/core/tests/published-extension.test.ts packages/core/tests/catalog-v3.test.ts packages/protocol/tests"
   },
   "keywords": [
     "mcp",

@@ -115,6 +115,10 @@ also works while nothing is connected.
 | `BROWSER_ALLOW_PAIRING` | `false` | `true` also accepts tokens issued by the pairing web. Auth is on when this or the static token is set. |
 | `BROWSER_TOKEN_STORE` | `/app/data/tokens.json` | JSON file where issued tokens live, so they survive a restart. Mount a volume for the path. |
 | `BROWSER_EXTENSION_ZIP` | `/app/extension/agent-jake-browser-extension.zip` | Archive served at `/download`. |
+| `BROWSER_EXTENSION_DIR` | `/data/extension` | Folder where the extension CI publishes `latest.json` and `agent-jake-browser-extension.zip`. `/download` serves that zip when it exists (an explicit `BROWSER_EXTENSION_ZIP` wins); `/download/latest.json` serves the manifest. |
+| `AGENT_BROWSER_CONNECTION_LABELS` | unset | JSON `{"<connectionId>": "<name>"}`: friendly names (`"work"`, `"home"`) accepted wherever a `connection` is. Legacy endpoint only. |
+| `AGENT_BROWSER_DEFAULT_CONNECTION` | unset | Browser (id or name) an MCP session uses until it picks one. With it, a session never falls back to "most recently used". Legacy endpoint only. |
+| `AGENT_BROWSER_OP_BIN` | `op` | Executable `browser_fill_secret` runs as `<bin> read <op://ref>` on the server. A deployment can point it at a wrapper that picks the 1Password backend. |
 | `BROWSER_PUBLIC_WS_URL` | derived | Full `ws(s)://host/path` handed to the extension. Use it when the proxy mapping is not derivable from the request. |
 | `BROWSER_WS_PATH` | `/` | Path advertised to the extension, for proxies that map the socket to a subpath. |
 | `MCP_HTTP_HOST` / `MCP_HTTP_PORT` | `127.0.0.1` / `8000` | MCP streamable HTTP endpoint. |
@@ -143,7 +147,8 @@ can also carry private data, so use these tools only with trusted MCP clients.
 | --- | --- |
 | `POST /mcp` (plus `GET`/`DELETE`) | MCP streamable HTTP endpoint. |
 | `GET /` | Small page with the download link, the pairing link and the live connection list. |
-| `GET /download` | Serves the extension zip from `BROWSER_EXTENSION_ZIP`. |
+| `GET /download` | Serves the extension zip (`BROWSER_EXTENSION_ZIP`, else the one published in `BROWSER_EXTENSION_DIR`, else the image's). |
+| `GET /download/latest.json` | The published extension build `{version, build, sha, publishedAt, download}`; `404` when none was published. Read by installed extensions to tell their user a newer build exists. |
 | `GET /connections` | JSON: auth status, derived wsUrl and the current connections. |
 | `POST /pair/start` | Extension registers a one-time code (`{otp, connectionId?, label?}`), valid 10 minutes. |
 | `GET /pair` | Approval page, prefilled from `?otp=`. |

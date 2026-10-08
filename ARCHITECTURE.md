@@ -7,7 +7,7 @@
 
 | cliente | repositorio | versión / contrato | cómo llega |
 |---|---|---|---|
-| Servidor MCP (HTTP + stdio) | este repo (`packages/core`) | `docs/contracts/browser-harness-v2.md` (negociado) y `-v1.md` (**deprecated**, legacy) | imagen construida desde este repo |
+| Servidor MCP (HTTP + stdio) | este repo (`packages/core`) | `docs/contracts/browser-harness-v3.md` (negociado), `-v2.md` y `-v1.md` (**deprecated**, v1 = legacy) | imagen construida desde este repo |
 | Extensión de Chrome | `pocharlies-org/agent-jake-browser-mcp-extension` | misma `PROTOCOL_VERSION`; recibe `@agent-jake-browser/protocol` como tgz vendorizado | manual / zip de `/download` |
 | Imagen k8s | `pocharlies-org/k8s-agentjake-browser-mcp-pocharlies` (tronco `main`) | pin por digest en `k8s/base/manifest.yaml` | ArgoCD `agentjake-browser-mcp` |
 | Casas | `packages/house-pocharlies`, `packages/house-staticduo` | adaptadores; dependen de core | composición en `entrypoints/` |
@@ -36,6 +36,13 @@ Node 22/24, TypeScript, npm workspaces, vitest, tsup, zod 4.
 Prohibida una segunda copia de esquemas (JSON/TS a mano).
 
 ## 5. Cómo se construye aquí
+
+Funciones que la imagen de producción ya usaba (INFRA-721): `connection-target.ts` (nombres de conexión
+`AGENT_BROWSER_CONNECTION_LABELS`, conexión por defecto `AGENT_BROWSER_DEFAULT_CONNECTION`, elección por sesión MCP; **solo
+endpoint legacy**), `browser_fill_secret` (lee `AGENT_BROWSER_OP_BIN read <op://ref>` en el servidor y teclea con
+`browser_type` + `secret`; el envoltorio `op` del despliegue elige el backend de 1Password y no vive aquí), `browser_passkey`
+(capability `passkey` en el negociado) y `GET /download/latest.json` (`published-extension.ts`, `BROWSER_EXTENSION_DIR`). Los
+esquemas de argumentos de las dos tools nuevas están en `packages/protocol/src/tool-args.ts`. Nada de esto nombra una casa.
 
 Endpoint legacy (sin versión, parser intacto) y endpoint **negociado** `/ws/harness` aparte; nunca se cae de uno
 al otro por timeout. `maxPayload` de 32 MiB (33 554 432 B) solo en el negociado. El binding de navegador es por
