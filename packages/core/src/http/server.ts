@@ -78,7 +78,7 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
     type: 'string',
     description:
       DEFAULT_CONNECTION || Object.keys(CONNECTION_LABELS).length
-        ? 'Browser to drive: a connection id or its name (e.g. "mac", "x86"). Once given, it sticks for the rest of this MCP session. Without it: this session\'s choice, else the configured default. See browser_list_connections.'
+        ? 'Browser to drive: a connection id or its name (e.g. "work", "home"). Once given, it sticks for the rest of this MCP session. Without it: this session\'s choice, else the configured default. See browser_list_connections.'
         : 'Browser connection id to target; defaults to the most recently used. See browser_list_connections.',
   };
 

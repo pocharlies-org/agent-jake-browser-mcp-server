@@ -9,9 +9,9 @@ import { WebSocket } from 'ws';
 import { createHttpServer, type HttpServer } from '../src/http/server.js';
 import { TOKEN, ready, type TestClient } from './harness-helpers.js';
 
-const MAC = '259bc3e6-a078-4c8a-b001-05a3315220af';
-const X86 = 'ad99bc56-00b1-4cb5-b4b0-eb02a114bee0';
-const LABELS = { [MAC]: 'mac', [X86]: 'x86' };
+const WORK = 'a1b2c3d4-0001-4000-8000-000000000001';
+const HOME = 'a1b2c3d4-0002-4000-8000-000000000002';
+const LABELS = { [WORK]: 'work', [HOME]: 'home' };
 
 interface FakeExtension { socket: WebSocket; messages: Array<Record<string, any>> }
 const sockets: WebSocket[] = [];
@@ -71,51 +71,51 @@ afterEach(async () => {
 });
 
 describe('labelled browsers on the legacy endpoint', () => {
-  it('a call without `connection` goes to the connection labelled x86, the configured default', async () => {
-    const { http, base } = await start({ connectionLabels: LABELS, defaultConnection: 'x86' });
-    const mac = await connectExtension(http, MAC);
-    const x86 = await connectExtension(http, X86);
+  it('a call without `connection` goes to the connection labelled home, the configured default', async () => {
+    const { http, base } = await start({ connectionLabels: LABELS, defaultConnection: 'home' });
+    const work = await connectExtension(http, WORK);
+    const home = await connectExtension(http, HOME);
     await open(http, 2);
     const call = await mcpSession(base);
 
     const r = await call('browser_reload');
     expect(r.isError).toBeUndefined();
-    expect(x86.messages.map((m) => m.type)).toEqual(['browser_reload']);
-    expect(mac.messages).toEqual([]);
+    expect(home.messages.map((m) => m.type)).toEqual(['browser_reload']);
+    expect(work.messages).toEqual([]);
   });
 
   it('a name chosen in a call sticks for THAT session only; other sessions keep the default; `connection` never reaches the browser', async () => {
-    const { http, base } = await start({ connectionLabels: LABELS, defaultConnection: 'x86' });
-    const mac = await connectExtension(http, MAC);
-    const x86 = await connectExtension(http, X86);
+    const { http, base } = await start({ connectionLabels: LABELS, defaultConnection: 'home' });
+    const work = await connectExtension(http, WORK);
+    const home = await connectExtension(http, HOME);
     await open(http, 2);
     const a = await mcpSession(base);
     const b = await mcpSession(base);
 
-    await a('browser_navigate', { url: 'https://example.com', connection: 'mac' });
+    await a('browser_navigate', { url: 'https://example.com', connection: 'work' });
     await a('browser_reload'); // no connection: A's own choice
     await b('browser_reload'); // B never chose: the default
-    expect(mac.messages.map((m) => m.type)).toEqual(['browser_navigate', 'browser_reload']);
-    expect(x86.messages.map((m) => m.type)).toEqual(['browser_reload']);
-    expect(JSON.stringify(mac.messages)).not.toContain('connection');
+    expect(work.messages.map((m) => m.type)).toEqual(['browser_navigate', 'browser_reload']);
+    expect(home.messages.map((m) => m.type)).toEqual(['browser_reload']);
+    expect(JSON.stringify(work.messages)).not.toContain('connection');
   });
 
   it('with the chosen browser gone the session goes back to the default, and an unknown name is an error that sends nothing', async () => {
-    const { http, base } = await start({ connectionLabels: LABELS, defaultConnection: 'x86' });
-    const mac = await connectExtension(http, MAC);
-    const x86 = await connectExtension(http, X86);
+    const { http, base } = await start({ connectionLabels: LABELS, defaultConnection: 'home' });
+    const work = await connectExtension(http, WORK);
+    const home = await connectExtension(http, HOME);
     await open(http, 2);
     const call = await mcpSession(base);
-    await call('browser_reload', { connection: MAC }); // by id also works
-    mac.socket.close();
+    await call('browser_reload', { connection: WORK }); // by id also works
+    work.socket.close();
     await expect.poll(() => http.context.listConnections().filter((c) => c.open).length).toBe(1);
     await call('browser_reload');
-    expect(x86.messages).toHaveLength(1);
+    expect(home.messages).toHaveLength(1);
 
     const bad = await call('browser_reload', { connection: 'ipad' });
     expect(bad.isError).toBe(true);
     expect(bad.content[0].text).toContain('browser_list_connections');
-    expect(x86.messages).toHaveLength(1);
+    expect(home.messages).toHaveLength(1);
   });
 
   it('nothing configured: the legacy rule is untouched (several browsers, no choice => the most recently used)', async () => {
@@ -133,56 +133,56 @@ describe('labelled browsers on the legacy endpoint', () => {
   });
 
   it('a default is configured but not connected and several others are: it asks instead of guessing', async () => {
-    const { http, base } = await start({ connectionLabels: { ...LABELS, 'conn-c': 'ipad' }, defaultConnection: 'x86' });
-    const mac = await connectExtension(http, MAC);
+    const { http, base } = await start({ connectionLabels: { ...LABELS, 'conn-c': 'ipad' }, defaultConnection: 'home' });
+    const work = await connectExtension(http, WORK);
     const ipad = await connectExtension(http, 'conn-c');
     await open(http, 2);
     const call = await mcpSession(base);
 
     const r = await call('browser_reload');
     expect(r.isError).toBe(true);
-    expect(r.content[0].text).toContain(`mac (${MAC})`);
+    expect(r.content[0].text).toContain(`work (${WORK})`);
     expect(r.content[0].text).toContain('ipad (conn-c)');
-    expect(mac.messages.length + ipad.messages.length).toBe(0);
+    expect(work.messages.length + ipad.messages.length).toBe(0);
   });
 
   it('a single browser is used even with no default and no name', async () => {
     const { http, base } = await start({ connectionLabels: LABELS, defaultConnection: '' });
-    const x86 = await connectExtension(http, X86);
+    const home = await connectExtension(http, HOME);
     await open(http, 1);
     const call = await mcpSession(base);
     expect((await call('browser_reload')).isError).toBeUndefined();
-    expect(x86.messages).toHaveLength(1);
+    expect(home.messages).toHaveLength(1);
   });
 
   it('browser_list_connections shows names, this session\'s pick and the configured default, and waits for no browser', async () => {
-    const { http, base } = await start({ connectionLabels: LABELS, defaultConnection: 'x86' });
+    const { http, base } = await start({ connectionLabels: LABELS, defaultConnection: 'home' });
     const call = await mcpSession(base);
     expect(JSON.parse((await call('browser_list_connections')).content[0].text)).toEqual([]);
 
-    await connectExtension(http, MAC);
-    await connectExtension(http, X86);
+    await connectExtension(http, WORK);
+    await connectExtension(http, HOME);
     await open(http, 2);
-    await call('browser_reload', { connection: 'mac' });
+    await call('browser_reload', { connection: 'work' });
     const rows = JSON.parse((await call('browser_list_connections')).content[0].text);
     expect(rows[0]).toHaveProperty('connectionId'); // the legacy fields are still there
     expect(rows.map((r: any) => [r.name, r.thisSession, r.configuredDefault]).sort()).toEqual([
-      ['mac', true, false],
-      ['x86', false, true],
+      ['home', false, true],
+      ['work', true, false],
     ]);
   });
 
   it('the deployment variables are read when no option is given', async () => {
     const prev = [process.env.AGENT_BROWSER_CONNECTION_LABELS, process.env.AGENT_BROWSER_DEFAULT_CONNECTION];
     process.env.AGENT_BROWSER_CONNECTION_LABELS = JSON.stringify(LABELS);
-    process.env.AGENT_BROWSER_DEFAULT_CONNECTION = 'x86';
+    process.env.AGENT_BROWSER_DEFAULT_CONNECTION = 'home';
     try {
       const { http, base } = await start({});
-      const mac = await connectExtension(http, MAC);
-      const x86 = await connectExtension(http, X86);
+      const work = await connectExtension(http, WORK);
+      const home = await connectExtension(http, HOME);
       await open(http, 2);
       await (await mcpSession(base))('browser_reload');
-      expect([x86.messages.length, mac.messages.length]).toEqual([1, 0]);
+      expect([home.messages.length, work.messages.length]).toEqual([1, 0]);
     } finally {
       for (const [i, k] of ['AGENT_BROWSER_CONNECTION_LABELS', 'AGENT_BROWSER_DEFAULT_CONNECTION'].entries()) {
         if (prev[i] === undefined) delete process.env[k];
@@ -214,10 +214,10 @@ describe('the negotiated endpoint is not touched by those names (SessionBinding 
   });
 
   it('two ready browsers and a configured default: the session still gets browser_selection_required, nothing is sent', async () => {
-    const { http } = await start({ connectionLabels: LABELS, defaultConnection: 'x86', harness: { port: 0, house: 'house-a' } });
+    const { http } = await start({ connectionLabels: LABELS, defaultConnection: 'home', harness: { port: 0, house: 'house-a' } });
     await http.harness!.listening;
     const port = http.harness!.port();
-    for (const platform of ['x86', 'mac']) {
+    for (const platform of ['home', 'work']) {
       const { client } = await ready(port, { installationId: `inst-${platform}`, platform });
       clients.push(client);
     }

@@ -14,7 +14,7 @@
  *      deployment configured no default.
  *   6. Otherwise an error listing the choices — never a guess.
  *
- * Friendly names come from AGENT_BROWSER_CONNECTION_LABELS ({"<connectionId>": "mac"}) or
+ * Friendly names come from AGENT_BROWSER_CONNECTION_LABELS ({"<connectionId>": "work"}) or
  * from the label the extension sent in the handshake.
  */
 

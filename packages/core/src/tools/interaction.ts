@@ -395,7 +395,7 @@ const without = (secret: string, text: string) => text.split(secret).join('[secr
 
 export const fillSecretTool: Tool = createTool({
   name: 'browser_fill_secret',
-  description: 'Type a secret from 1Password (op://vault/item/field) into a field. The value is read on the server machine and never appears in arguments, results or logs. Use it for passwords AND for 2FA/TOTP codes (Google 2-Step Verification included), never browser_type. TOTP: reference the OTP field of the item BY ITS FIELD ID with ?attribute=otp (op://vault/item/TOTP_xxxx?attribute=otp) and it types the current 6-digit code. The field label changes with the app language ("one-time password", "contraseña de un solo uso") and accented labels do not resolve; on the x86, `op-secret --otp-ref <item> [vault]` prints the exact reference. Without ?attribute=otp it would type the otpauth:// seed.',
+  description: 'Type a secret from 1Password (op://vault/item/field) into a field. The value is read on the server machine and never appears in arguments, results or logs. Use it for passwords AND for 2FA/TOTP codes (Google 2-Step Verification included), never browser_type. TOTP: reference the OTP field of the item BY ITS FIELD ID with ?attribute=otp (op://vault/item/TOTP_xxxx?attribute=otp) and it types the current 6-digit code. The field label changes with the app language ("one-time password", "contraseña de un solo uso") and accented labels do not resolve. Without ?attribute=otp it would type the otpauth:// seed.',
   schema: FILL_SECRET_ARGS,
   async handle(context, params) {
     let value: string;
@@ -466,7 +466,7 @@ export const passkeyTool: Tool = createTool({
     if (!response.success) {
       const message = response.error?.message ?? 'Passkey click failed';
       return errorResult(/Unknown tool/.test(message)
-        ? 'The browser extension does not know browser_passkey yet: it updates itself (or reload it), then try again.'
+        ? 'This build of the browser extension does not support passkeys (browser_passkey). Nothing was clicked.'
         : message);
     }
     const passkey = (response.result as { passkey?: PasskeyOutcome } | undefined)?.passkey;

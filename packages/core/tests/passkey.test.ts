@@ -65,7 +65,7 @@ describe('browser_passkey', () => {
     } as unknown as Context;
     const r = await tool.handle(context, { ref: 'e3', mode: 'use' });
     expect(isError(r)).toBe(true);
-    expect(text(r)).toContain('does not know browser_passkey yet');
+    expect(text(r)).toContain('does not support passkeys');
   });
 
   it('rejects a missing or unknown mode, or no target, without clicking', async () => {

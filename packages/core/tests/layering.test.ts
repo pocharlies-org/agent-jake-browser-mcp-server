@@ -4,7 +4,8 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
 const root = resolve(new URL('../../..', import.meta.url).pathname);
-const FORBIDDEN = /house-pocharlies|house-staticduo|op-safe/;
+// What names a house, its machines or its host tooling: never in core or protocol (D2). Add a case, never remove one.
+const FORBIDDEN = /house-pocharlies|house-staticduo|op-safe|op-secret|nas-docker|\bx86\b|sauvage|llavero|\/home\/|e-dani\.com|CronJob/;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of readdirSync(dir)) {
@@ -17,6 +18,17 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 describe('core has no houses (D2)', () => {
+  it.each([
+    'house-pocharlies', 'house-staticduo', 'op-safe',
+    'on the x86, `op-secret --otp-ref <item>` prints the reference', 'nas-docker/mcp/agent-jake-browser', 'the x86 host',
+    'sauvage', 'llavero vault', '/home/dibanez/src', 'https://browser-mcp.lan.e-dani.com', 'a CronJob',
+  ])('the pattern catches %j', (sample) => {
+    expect(FORBIDDEN.test(sample)).toBe(true);
+  });
+  it('and leaves ordinary words alone', () => {
+    expect(FORBIDDEN.test('x86_64 is fine only as part of a longer word; "home" and "work" are neutral names')).toBe(false);
+  });
+
   for (const pkg of ['packages/core', 'packages/protocol']) {
     it(`${pkg}: no reference to a house adapter or op-safe anywhere in the package`, () => {
       const offenders = walk(join(root, pkg))

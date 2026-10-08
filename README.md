@@ -116,7 +116,7 @@ also works while nothing is connected.
 | `BROWSER_TOKEN_STORE` | `/app/data/tokens.json` | JSON file where issued tokens live, so they survive a restart. Mount a volume for the path. |
 | `BROWSER_EXTENSION_ZIP` | `/app/extension/agent-jake-browser-extension.zip` | Archive served at `/download`. |
 | `BROWSER_EXTENSION_DIR` | `/data/extension` | Folder where the extension CI publishes `latest.json` and `agent-jake-browser-extension.zip`. `/download` serves that zip when it exists (an explicit `BROWSER_EXTENSION_ZIP` wins); `/download/latest.json` serves the manifest. |
-| `AGENT_BROWSER_CONNECTION_LABELS` | unset | JSON `{"<connectionId>": "<name>"}`: friendly names (`"x86"`, `"mac"`) accepted wherever a `connection` is. Legacy endpoint only. |
+| `AGENT_BROWSER_CONNECTION_LABELS` | unset | JSON `{"<connectionId>": "<name>"}`: friendly names (`"work"`, `"home"`) accepted wherever a `connection` is. Legacy endpoint only. |
 | `AGENT_BROWSER_DEFAULT_CONNECTION` | unset | Browser (id or name) an MCP session uses until it picks one. With it, a session never falls back to "most recently used". Legacy endpoint only. |
 | `AGENT_BROWSER_OP_BIN` | `op` | Executable `browser_fill_secret` runs as `<bin> read <op://ref>` on the server. A deployment can point it at a wrapper that picks the 1Password backend. |
 | `BROWSER_PUBLIC_WS_URL` | derived | Full `ws(s)://host/path` handed to the extension. Use it when the proxy mapping is not derivable from the request. |
