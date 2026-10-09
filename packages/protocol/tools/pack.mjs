@@ -20,12 +20,15 @@ const outDir = resolve(process.argv[2] ?? join(pkgDir, 'artifact'));
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, encoding: 'utf8' }).trim();
 
-execFileSync('npx', ['tsup'], { cwd: pkgDir, stdio: 'inherit' });
-const mod = await import(`${pathToFileURL(join(pkgDir, 'dist/index.js')).href}?v=${Date.now()}`);
+// Build into a private directory: packing must never rewrite this package's own dist/,
+// which other suites import through node_modules while they run in parallel.
+const build = mkdtempSync(join(tmpdir(), 'ajb-protocol-build-'));
+execFileSync('npx', ['tsup', '--out-dir', build], { cwd: pkgDir, stdio: 'inherit' });
+const mod = await import(`${pathToFileURL(join(build, 'index.js')).href}?v=${Date.now()}`);
 const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
 
 const stage = mkdtempSync(join(tmpdir(), 'ajb-pack-'));
-cpSync(join(pkgDir, 'dist'), join(stage, 'dist'), { recursive: true });
+cpSync(build, join(stage, 'dist'), { recursive: true });
 const staged = { ...pkg, scripts: undefined, dependencies: undefined, devDependencies: undefined };
 staged.browserHarnessProtocol = {
   supportedProtocolVersions: [...mod.SUPPORTED_PROTOCOL_VERSIONS],
@@ -62,4 +65,5 @@ const provenance = {
 };
 writeFileSync(join(outDir, 'provenance.json'), `${JSON.stringify(provenance, null, 2)}\n`);
 rmSync(stage, { recursive: true, force: true });
+rmSync(build, { recursive: true, force: true });
 console.log(`packed ${wanted}\n${JSON.stringify(provenance, null, 2)}`);
