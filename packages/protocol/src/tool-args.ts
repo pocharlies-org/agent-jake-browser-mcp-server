@@ -23,6 +23,17 @@ export const FILL_SECRET_ARGS = z
   })
   .refine(target, TARGET_MESSAGE);
 
+/** Argumentos de los plugins del servidor (INFRA-909): herramientas que no tocan el navegador. */
+export const DELEGAR_ARGS = z.object({
+  orden: z.string().min(1).describe('Qué tiene que hacer el agente, con todo el contexto necesario.'),
+  titulo: z.string().max(60).optional().describe('Título corto del agente (<= 60 caracteres).'),
+  proveedor: z.string().optional().describe('Par proveedor/modelo, p. ej. claude/qwen38-flash-next. Por defecto, el del servidor.'),
+});
+
+export const DELEGAR_ESTADO_ARGS = z.object({
+  agente: z.string().min(1).describe('El id que devolvió `delegar`.'),
+});
+
 export const PASSKEY_ARGS = z
   .object({
     ref: z.string().optional().describe('Element reference from browser_state/snapshot of the button that starts the passkey ceremony'),

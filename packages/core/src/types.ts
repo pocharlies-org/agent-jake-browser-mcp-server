@@ -147,5 +147,10 @@ export interface Tool {
    * so callers must not gate them on an active connection.
    */
   serverSide?: boolean;
+  /**
+   * Plugin (INFRA-909): una herramienta del servidor que habla con un servicio de fuera, no con el
+   * navegador. No lleva el argumento `connection` que se anuncia a las herramientas de navegador.
+   */
+  external?: boolean;
   handle(context: Context, params?: Record<string, unknown>): Promise<ToolResult>;
 }

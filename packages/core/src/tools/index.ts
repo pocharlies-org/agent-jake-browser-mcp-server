@@ -9,6 +9,7 @@ import { utilityTools } from './utility.js';
 import { tabTools } from './tabs.js';
 import { queryTools } from './queries.js';
 import { connectionsTools } from './connections.js';
+import { getPluginTools } from './plugins.js';
 import type { Tool } from '../types.js';
 
 /**
@@ -39,3 +40,11 @@ export { connectionsTools } from './connections.js';
 
 // Re-export types and helpers
 export { createTool, textResult, imageResult, errorResult, mixedResult } from './types.js';
+
+/**
+ * Lo que ve un cliente MCP: las herramientas del navegador más los plugins (INFRA-909).
+ * `getAllTools()` sigue siendo el catálogo del navegador, que es lo que comprueba el contrato v3.
+ */
+export function getMcpTools(): Tool[] {
+  return [...getAllTools(), ...getPluginTools()];
+}
