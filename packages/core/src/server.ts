@@ -7,7 +7,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { createContext, type ContextManager } from './context.js';
-import { getAllTools } from './tools/index.js';
+import { getMcpTools } from './tools/index.js';
 import { logger } from './utils/logger.js';
 import { randomUUID } from 'crypto';
 import { createHarnessServer, type HarnessServer, type HarnessServerOptions } from './harness-server.js';
@@ -38,7 +38,7 @@ export async function createServer(options: ServerOptions): Promise<MCPServer> {
   const stdioSessionId = randomUUID();
 
   // Get all available tools
-  const tools = getAllTools();
+  const tools = getMcpTools();
   const toolMap = new Map<string, Tool>();
   for (const tool of tools) {
     toolMap.set(tool.schema.name, tool);

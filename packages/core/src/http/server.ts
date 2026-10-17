@@ -12,7 +12,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { createContext } from '../context.js';
-import { getAllTools } from '../tools/index.js';
+import { getMcpTools } from '../tools/index.js';
 import { getSharedTokenStore } from '../token-store.js';
 import { createPairingStore } from '../pairing-store.js';
 import { patchZipConfig } from '../extension-zip.js';
@@ -99,7 +99,7 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
   /** MCP session -> principal that created it. Session ids are routing state, never credentials. */
   const owners = new Map<string, string>();
   const tokenStore = getSharedTokenStore();
-  const allTools = getAllTools();
+  const allTools = getMcpTools();
   const toolMap = new Map(allTools.map((tool) => [tool.schema.name, tool]));
 
   const pairing = createPairingStore({
@@ -128,7 +128,8 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
   }
 
   function toolsListPayload() {
-    return allTools.map((tool) => annotateToolSchema(tool.schema));
+    // Un plugin no va a ningún navegador: no se le anuncia `connection` (INFRA-909).
+    return allTools.map((tool) => (tool.external ? tool.schema : annotateToolSchema(tool.schema)));
   }
 
   const openConnections = () => context.listConnections().filter((c) => c.open !== false);
