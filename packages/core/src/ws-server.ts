@@ -20,7 +20,18 @@ export interface WSServerOptions {
   onConnection?: (ws: WebSocket, connectionId: string) => void;
   onDisconnection?: (connectionId: string) => void;
   onMessage?: (message: ExtensionResponse) => void;
+  /** Liveness watchdog tuning; defaults are for the real extension (25 s heartbeats). */
+  liveness?: {
+    /** Silence after which an open-but-unanswered connection is evicted (default 90 s). */
+    deadlineMs?: number;
+    /** How often the watchdog scans the registry (default 15 s). */
+    checkIntervalMs?: number;
+  };
 }
+
+/** The extension heartbeats every 25 s; 90 s of silence is > 3 missed beats. */
+const DEFAULT_LIVENESS_DEADLINE_MS = 90_000;
+const DEFAULT_LIVENESS_CHECK_INTERVAL_MS = 15_000;
 
 export interface HandshakeParams {
   token: string | null;
@@ -216,6 +227,27 @@ export function createWSServer(options: WSServerOptions): WSServer {
     logger.error('WebSocket server error', err);
   });
 
+  // Liveness watchdog (SC-2858): a frozen extension service worker keeps its
+  // socket OPEN while answering nothing, and every tool call routed to it dies
+  // on the 30 s timeout — this hung the browser harness for ~22 h until Chrome
+  // was restarted. The extension heartbeats every 25 s, so silence past the
+  // deadline means the socket is a zombie: terminate it, which drops it from
+  // the registry (close handler) and makes routing fail fast until the real
+  // reconnect.
+  const livenessDeadlineMs = options.liveness?.deadlineMs ?? DEFAULT_LIVENESS_DEADLINE_MS;
+  const livenessCheckMs = options.liveness?.checkIntervalMs ?? DEFAULT_LIVENESS_CHECK_INTERVAL_MS;
+  const livenessTimer = setInterval(() => {
+    for (const conn of registry.staleConnections(livenessDeadlineMs)) {
+      logger.warn(
+        `[WS] Liveness: terminating ${conn.connectionId}, silent for ${Math.round(
+          (Date.now() - conn.lastActiveAt) / 1000,
+        )}s (> ${livenessDeadlineMs}ms)`,
+      );
+      conn.ws.terminate();
+    }
+  }, livenessCheckMs);
+  livenessTimer.unref();
+
   function targetSocket(connectionId?: string): { ws: WebSocket; connectionId: string } | null {
     const resolved = registry.resolve(connectionId);
     if (!resolved.ok) return null;
@@ -300,6 +332,7 @@ export function createWSServer(options: WSServerOptions): WSServer {
      * forcibly closing every connection.
      */
     async close(): Promise<void> {
+      clearInterval(livenessTimer);
       logger.info(`[WS] Closing server, ${pendingRequests.size} pending requests`);
 
       // If there are pending requests, wait for them (up to 5s)
