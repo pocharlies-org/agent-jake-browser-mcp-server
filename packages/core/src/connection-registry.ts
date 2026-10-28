@@ -130,6 +130,23 @@ export class ConnectionRegistry {
     return Array.from(this.connections.values());
   }
 
+  /**
+   * Open connections that have gone silent for longer than `deadlineMs`.
+   *
+   * A healthy extension sends an app-level heartbeat every 25 s (which the
+   * server records via `touch`). A half-dead one — service worker frozen,
+   * socket still OPEN — stops heartbeating while `readyState` keeps it
+   * routable, and every tool call routed to it times out. The liveness
+   * watchdog in the WS server uses this list to evict those zombies so
+   * routing fails fast (or picks a live connection) instead of hanging.
+   */
+  staleConnections(deadlineMs: number, now?: number): ManagedConnection[] {
+    const at = now ?? Date.now();
+    return this.all().filter(
+      (c) => c.ws.readyState === WebSocket.OPEN && at - c.lastActiveAt > deadlineMs,
+    );
+  }
+
   list(now?: number): BrowserConnectionInfo[] {
     const activeId = this.lastUsedConnectionId;
     const at = now ?? Date.now();
