@@ -63,6 +63,14 @@ function fieldWarning(result: unknown): string | undefined {
 }
 
 /**
+ * Treat extension warnings as failure signals, never as safe text to return to the caller.
+ */
+function hasFieldWarning(result: unknown): boolean {
+  const warning = (result as { warning?: unknown } | undefined)?.warning;
+  return typeof warning === 'string' && warning.length > 0;
+}
+
+/**
  * Type text into an element.
  */
 export const typeTool: Tool = createTool({
@@ -96,7 +104,11 @@ export const typeTool: Tool = createTool({
       return errorResult(response.error?.message ?? 'Type failed');
     }
 
-    return textResult(`Typed "${params.text}" into ${params.ref ?? params.selector}`);
+    const warning = fieldWarning(response.result);
+    const target = params.ref ?? params.selector;
+    return textResult(warning
+      ? `Typed "${params.text}" into ${target}, but ${warning}: check the field before going on`
+      : `Typed "${params.text}" into ${target}`);
   },
 });
 
@@ -393,44 +405,60 @@ export async function readSecret(ref: string): Promise<string> {
   return stdout.replace(/\r?\n$/, '');
 }
 
-/** Whatever the extension says back may echo what it typed: the secret never leaves this function inside a message. */
-const without = (secret: string, text: string) => text.split(secret).join('[secret]');
-
-export const fillSecretTool: Tool = createTool({
+/**
+ * Type a secret from 1Password into a field. The value never reaches the model: it is not in
+ * the tool arguments or the result. A compatible extension must honor `secret` and redact
+ * both request and response logs; older extensions are not safe for this operation.
+ */
+const fillSecret = createTool({
   name: 'browser_fill_secret',
   description: 'Type a secret from 1Password (op://vault/item/field) into a field. The value is read on the server machine and never appears in arguments, results or logs. Use it for passwords AND for 2FA/TOTP codes (Google 2-Step Verification included), never browser_type. TOTP: reference the OTP field of the item BY ITS FIELD ID with ?attribute=otp (op://vault/item/TOTP_xxxx?attribute=otp) and it types the current 6-digit code. The field label changes with the app language ("one-time password", "contraseña de un solo uso") and accented labels do not resolve. Without ?attribute=otp it would type the otpauth:// seed.',
   schema: FILL_SECRET_ARGS,
   async handle(context, params) {
     let value: string;
     try {
-      value = await readSecret(params.secretRef);
-    } catch (err) {
-      // Exit code and stderr only: op never prints the secret there, and stdout is never shown.
-      const e = err as { code?: string | number; stderr?: string };
-      const why = [e.code, (e.stderr ?? '').trim().slice(0, 300)].filter(Boolean).join(': ');
-      return errorResult(`Could not read ${params.secretRef}${why ? ` (${why})` : ''}. Is 1Password reachable from the server?`);
+      value = await (context.readSecret ?? readSecret)(params.secretRef);
+    } catch {
+      // A configurable reader may put secrets in stderr or its exception message.
+      return errorResult('Could not read the secret. Check the configured 1Password reader, credentials and AGENT_BROWSER_OP_BACKEND on the server.');
     }
-    if (!value) return errorResult(`Empty secret at ${params.secretRef}`);
-    const response = await context.send('browser_type', {
-      ref: params.ref,
-      selector: params.selector,
-      text: value,
-      clear: params.clear,
-      // The extension keeps the text out of its activity log when this is set.
-      secret: true,
-    });
-    if (!response.success) {
-      return errorResult(without(value, response.error?.message ?? 'Fill secret failed'));
+    if (typeof value !== 'string' || !value) return errorResult('The configured reader returned an empty secret.');
+    let response: ExtensionResponse;
+    try {
+      response = await context.send('browser_type', {
+        ref: params.ref,
+        selector: params.selector,
+        text: value,
+        clear: params.clear,
+        // The extension keeps the text out of its activity log when this is set.
+        secret: true,
+      });
+    } catch {
+      return errorResult('Could not deliver the secret to the browser. Check the connection and target field before retrying.');
     }
-    const warning = fieldWarning(response.result);
-    if (warning) {
-      // An error, not a success with a note: submitting a field that did not get the secret
-      // (a 2FA code above all) burns an attempt.
-      return errorResult(`Did not fill ${params.ref ?? params.selector} as expected: ${without(value, warning)}. Check the field and fill it again before submitting.`);
+    if (response?.success !== true) {
+      return errorResult('Could not fill the target field. Check the field before retrying.');
     }
-    return textResult(`Filled ${params.ref ?? params.selector} with ${params.secretRef} (${value.length} chars)`);
+    if (hasFieldWarning(response.result) ||
+        (response.result as { typed?: unknown } | undefined)?.typed !== true ||
+        (response.result as { verified?: unknown } | undefined)?.verified !== true) {
+      // An error, not a success with a note: submitting a field without the secret (a 2FA code
+      // above all) burns an attempt.
+      return errorResult('Did not fill the target field as expected. Check the field before retrying or submitting.');
+    }
+    return textResult('Filled and verified the target field.');
   },
 });
+
+export const fillSecretTool: Tool = {
+  schema: fillSecret.schema,
+  handle: async (context, params) => {
+    if (process.env.AGENT_BROWSER_FILL_SECRET_ENABLED !== 'true') {
+      return errorResult('Secret filling is disabled on this server.');
+    }
+    return fillSecret.handle(context, params);
+  },
+};
 
 /**
  * Server→extension message that reads a value off the page for browser_save_secret. It is not an
