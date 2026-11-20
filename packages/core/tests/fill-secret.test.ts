@@ -1,18 +1,30 @@
 /**
  * browser_fill_secret: the secret is read on the server, typed through browser_type with the `secret` flag, and never
- * shows up in the result, in an error, in a log line or in the transcript of the negotiated endpoint.
+ * shows up in the result, in an error, in a log line or in the transcript of the negotiated endpoint. Success requires
+ * the extension to acknowledge with typed=true and verified=true; every other answer is an error (fork behavior).
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { callToolViaHarness } from '../src/harness-routing.js';
-import { getAllTools } from '../src/tools/index.js';
+import { fillSecretTool } from '../src/tools/interaction.js';
 import { fakeContext, isError, resultText } from './fake-context.js';
 import { useHarness } from './harness-fixture.js';
+import type { Context, ExtensionResponse } from '../src/types.js';
 
 const SECRET = 'hunter2-Sup3r$ecret';
-const tool = getAllTools().find((x) => x.schema.name === 'browser_fill_secret')!;
+const tool = fillSecretTool;
+const OK = { typed: true, verified: true };
+
+const originalGate = process.env.AGENT_BROWSER_FILL_SECRET_ENABLED;
+beforeEach(() => { process.env.AGENT_BROWSER_FILL_SECRET_ENABLED = 'true'; });
+afterEach(() => {
+  if (originalGate === undefined) delete process.env.AGENT_BROWSER_FILL_SECRET_ENABLED;
+  else process.env.AGENT_BROWSER_FILL_SECRET_ENABLED = originalGate;
+  delete process.env.AGENT_BROWSER_OP_BIN;
+  vi.restoreAllMocks();
+});
 
 async function fakeOp(body: string) {
   const dir = await mkdtemp(join(tmpdir(), 'op-'));
@@ -22,24 +34,22 @@ async function fakeOp(body: string) {
   process.env.AGENT_BROWSER_OP_BIN = bin;
 }
 
-afterEach(() => {
-  delete process.env.AGENT_BROWSER_OP_BIN;
-  vi.restoreAllMocks();
-});
-
 describe('browser_fill_secret', () => {
   it('types the secret flagged as secret and keeps it out of the result', async () => {
     await fakeOp(`[ "$1" = read ] && [ "$2" = "op://Private/item/password" ] && printf '%s\\n' '${SECRET}'`);
-    const { context, sent } = fakeContext();
+    const { context, sent } = fakeContext(OK);
     const r = await tool.handle(context, { ref: 'e5', secretRef: 'op://Private/item/password' });
     expect(sent).toEqual([{ type: 'browser_type', payload: { ref: 'e5', selector: undefined, text: SECRET, clear: true, secret: true } }]);
-    expect(JSON.stringify(r)).not.toContain(SECRET);
-    expect(resultText(r)).toContain(`${SECRET.length} chars`);
+    const out = JSON.stringify(r);
+    expect(out).not.toContain(SECRET);
+    expect(out).toContain('Filled and verified');
+    expect(out).not.toContain('op://Private');
+    expect(out).not.toContain(`${SECRET.length} chars`);
   });
 
   it('reads references with spaces in the vault name and the TOTP attribute', async () => {
     await fakeOp(`[ "$2" = "op://familia leila dani/Google/TOTP_abc?attribute=otp" ] && printf '123456\\n'`);
-    const { context, sent } = fakeContext();
+    const { context, sent } = fakeContext(OK);
     const r = await tool.handle(context, { selector: '#otp', secretRef: 'op://familia leila dani/Google/TOTP_abc?attribute=otp' });
     expect(isError(r)).toBe(false);
     expect(sent[0].payload.text).toBe('123456');
@@ -53,12 +63,14 @@ describe('browser_fill_secret', () => {
     expect(sent).toEqual([]);
   });
 
-  it('says why op failed: exit code and stderr, never stdout', async () => {
-    await fakeOp(`printf '%s' '${SECRET}'; echo 'item not found' >&2; exit 3`);
-    const { context } = fakeContext();
+  it('does not expose reader stderr when a configured wrapper fails', async () => {
+    await fakeOp(`printf '%s\\n' '${SECRET}' >&2; exit 1`);
+    const { context, sent } = fakeContext();
     const r = await tool.handle(context, { ref: 'e5', secretRef: 'op://Private/item/password' });
-    expect(resultText(r)).toContain('item not found');
+    expect(isError(r)).toBe(true);
     expect(JSON.stringify(r)).not.toContain(SECRET);
+    expect(JSON.stringify(r)).not.toContain('op://Private');
+    expect(sent).toEqual([]);
   });
 
   it('an empty secret types nothing', async () => {
@@ -74,20 +86,56 @@ describe('browser_fill_secret', () => {
     const { context } = fakeContext({ typed: SECRET, cleared: true, fieldLength: 0, warning: `the field holds 0 characters after typing ${SECRET.length}` });
     const r = await tool.handle(context, { selector: '#otp', secretRef: 'op://Private/item/password' });
     expect(isError(r)).toBe(true);
-    expect(resultText(r)).toContain('the field holds 0 characters');
+    const out = JSON.stringify(r);
+    expect(out).toContain('Did not fill the target field as expected');
+    expect(out).not.toContain(SECRET);
+  });
+
+  it('does not expose a typed secret from extension error or warning text', async () => {
+    await fakeOp(`printf '%s\\n' '${SECRET}'`);
+    const { context } = fakeContext({ warning: `Field value was ${SECRET}` });
+    const warningResult = await tool.handle(context, { ref: 'e5', secretRef: 'op://Private/item/password' });
+    expect(isError(warningResult)).toBe(true);
+    expect(JSON.stringify(warningResult)).not.toContain(SECRET);
+
+    const failingContext = {
+      ...context,
+      send: async () => ({ id: 'x', success: false, error: { message: `Typing ${SECRET} failed` } }),
+    } as unknown as Context;
+    const errorResult = await tool.handle(failingContext, { ref: 'e5', secretRef: 'op://Private/item/password' });
+    expect(isError(errorResult)).toBe(true);
+    expect(JSON.stringify(errorResult)).not.toContain(SECRET);
+  });
+
+  it('handles a transport rejection without reflecting its message or typed value', async () => {
+    await fakeOp(`printf '%s\\n' '${SECRET}'`);
+    const { context } = fakeContext();
+    const rejectingContext = {
+      ...context,
+      send: async () => { throw new Error(`Could not send ${SECRET}`); },
+    } as unknown as Context;
+    const r = await tool.handle(rejectingContext, { ref: 'e5', secretRef: 'op://Private/item/password' });
+    expect(isError(r)).toBe(true);
     expect(JSON.stringify(r)).not.toContain(SECRET);
   });
 
-  it('scrubs the secret from whatever the extension answers back', async () => {
-    await fakeOp(`printf '%s\\n' '${SECRET}'`);
-    for (const ctx of [
-      fakeContext({ warning: `field says ${SECRET}` }),
-      fakeContext({}, { message: `could not type ${SECRET}` }),
-    ]) {
-      const r = await tool.handle(ctx.context, { selector: '#a', secretRef: 'op://Private/item/password' });
-      expect(isError(r)).toBe(true);
-      expect(JSON.stringify(r)).not.toContain(SECRET);
-    }
+  it.each([
+    { success: true, result: {} },
+    { success: true, result: { typed: true, verified: false } },
+    { success: true, result: { typed: false, verified: true } },
+    { success: true, result: { typed: 'true', verified: true } },
+    { success: true, result: { typed: true, verified: 'true' } },
+    { success: 'true', result: { typed: true, verified: true } },
+    { success: 'false', result: { typed: true, verified: true } },
+    { success: true, result: null },
+    null,
+  ])('rejects legacy or malformed acknowledgement %j', async response => {
+    await fakeOp(`printf '%s' '${SECRET}'`);
+    const { context } = fakeContext();
+    context.send = async () => response as unknown as ExtensionResponse;
+    const result = await tool.handle(context, { ref: 'e5', secretRef: 'op://v/i/f' });
+    expect(isError(result)).toBe(true);
+    expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 
   it.each(['', 'op:/x', 'https://x', 'op://a\nb', 'op://a\u0000b', '-h'])('rejects the reference %j before reading anything', async (secretRef) => {
@@ -130,7 +178,7 @@ describe('browser_fill_secret on the negotiated endpoint', () => {
     const call = callToolViaHarness(fixture.harness(), tool, 'browser_fill_secret', { selector: '#pw', secretRef: 'op://Private/item/password' }, { sessionId: 's-secret' });
     const req = await client.next();
     expect(req).toMatchObject({ type: 'tool_request', tool: 'browser_type', args: { selector: '#pw', text: SECRET, secret: true } });
-    client.send({ type: 'tool_result', id: req.id, sessionId: req.sessionId, connectionId: ack.connectionId, house: ack.house, ok: true, data: { typed: SECRET, cleared: true } });
+    client.send({ type: 'tool_result', id: req.id, sessionId: req.sessionId, connectionId: ack.connectionId, house: ack.house, ok: true, data: { typed: true, verified: true } });
     const r = await call;
 
     expect(isError(r)).toBe(false);

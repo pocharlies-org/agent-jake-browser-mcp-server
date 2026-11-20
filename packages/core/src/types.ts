@@ -126,7 +126,11 @@ export interface ToolSchema {
  * `connectionId` pins a call to one browser; without it the server targets the
  * most recently used connection.
  */
+export type SecretReader = (reference: string) => Promise<string>;
+
 export interface Context {
+  /** Injectable server-side secret reader; values must never enter tool results or logs. */
+  readSecret?: SecretReader;
   send(
     type: ToolName,
     payload?: Record<string, unknown>,

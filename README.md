@@ -119,6 +119,7 @@ also works while nothing is connected.
 | `AGENT_BROWSER_CONNECTION_LABELS` | unset | JSON `{"<connectionId>": "<name>"}`: friendly names (`"work"`, `"home"`) accepted wherever a `connection` is. Legacy endpoint only. |
 | `AGENT_BROWSER_DEFAULT_CONNECTION` | unset | Browser (id or name) an MCP session uses until it picks one. With it, a session never falls back to "most recently used". Legacy endpoint only. |
 | `AGENT_BROWSER_OP_BIN` | `op` | Executable `browser_fill_secret` runs as `<bin> read <op://ref>` on the server. A deployment can point it at a wrapper that picks the 1Password backend. |
+| `AGENT_BROWSER_FILL_SECRET_ENABLED` | unset (disabled) | Set exactly `true` after verifying the paired extension supports secret redaction and field verification. Controls both tool discovery and execution of `browser_fill_secret`; other values, including `TRUE` and `1`, keep it disabled. |
 | `BROWSER_PUBLIC_WS_URL` | derived | Full `ws(s)://host/path` handed to the extension. Use it when the proxy mapping is not derivable from the request. |
 | `BROWSER_WS_PATH` | `/` | Path advertised to the extension, for proxies that map the socket to a subpath. |
 | `MCP_HTTP_HOST` / `MCP_HTTP_PORT` | `127.0.0.1` / `8000` | MCP streamable HTTP endpoint. |

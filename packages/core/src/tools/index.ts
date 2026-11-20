@@ -15,7 +15,9 @@ import type { Tool } from '../types.js';
 
 /**
  * Get all available tools. `browser_save_secret` is advertised only when it can work:
- * it needs a configured Connect write token and a vault allowlist.
+ * it needs a configured Connect write token and a vault allowlist. `browser_fill_secret`
+ * is advertised only with AGENT_BROWSER_FILL_SECRET_ENABLED=true (the gate also blocks
+ * direct execution, so discovery and invocation agree).
  */
 export function getAllTools(): Tool[] {
   return [
@@ -27,7 +29,10 @@ export function getAllTools(): Tool[] {
     ...tabTools,
     ...queryTools,
     ...connectionsTools,
-  ].filter((tool) => tool.schema.name !== 'browser_save_secret' || isSaveSecretConfigured());
+  ].filter((tool) =>
+    (tool.schema.name !== 'browser_save_secret' || isSaveSecretConfigured()) &&
+    (tool.schema.name !== 'browser_fill_secret' || process.env.AGENT_BROWSER_FILL_SECRET_ENABLED === 'true')
+  );
 }
 
 // Re-export individual tool sets

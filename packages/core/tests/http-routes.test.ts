@@ -80,6 +80,8 @@ async function startServer(options: {
     BROWSER_EXTENSION_ZIP: options.zipPath,
   };
   delete env.BROWSER_PUBLIC_WS_URL;
+  // The fill-secret gate is opt-in: the spawned server must not inherit it from the test host.
+  delete env.AGENT_BROWSER_FILL_SECRET_ENABLED;
   if (options.publicWsUrl) env.BROWSER_PUBLIC_WS_URL = options.publicWsUrl;
 
   const child = spawn(process.execPath, ['dist/http-server.js'], {
