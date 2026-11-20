@@ -10,10 +10,12 @@ import { tabTools } from './tabs.js';
 import { queryTools } from './queries.js';
 import { connectionsTools } from './connections.js';
 import { getPluginTools } from './plugins.js';
+import { isSaveSecretConfigured } from '../onepassword-connect.js';
 import type { Tool } from '../types.js';
 
 /**
- * Get all available tools.
+ * Get all available tools. `browser_save_secret` is advertised only when it can work:
+ * it needs a configured Connect write token and a vault allowlist.
  */
 export function getAllTools(): Tool[] {
   return [
@@ -25,7 +27,7 @@ export function getAllTools(): Tool[] {
     ...tabTools,
     ...queryTools,
     ...connectionsTools,
-  ];
+  ].filter((tool) => tool.schema.name !== 'browser_save_secret' || isSaveSecretConfigured());
 }
 
 // Re-export individual tool sets

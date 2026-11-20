@@ -7,10 +7,13 @@ import { lstat, open, type FileHandle } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { FILL_SECRET_ARGS, PASSKEY_ARGS } from '@agent-jake-browser/protocol';
+import { FILL_SECRET_ARGS, PASSKEY_ARGS, SAVE_SECRET_ARGS, SAVE_SECRET_DESTINATION } from '@agent-jake-browser/protocol';
 import { openPinnedDirectory, pinnedChildPath } from './pinned-directory.js';
 import { createTool, textResult, errorResult } from './types.js';
-import type { Tool } from '../types.js';
+import { planSave, requireSaveSecretConfigured, saveError, SaveError } from '../onepassword-connect.js';
+import { RE2JS } from 're2js';
+import { logger } from '../utils/logger.js';
+import type { ExtensionResponse, Tool, ToolName } from '../types.js';
 
 /**
  * Click on an element.
@@ -429,6 +432,107 @@ export const fillSecretTool: Tool = createTool({
   },
 });
 
+/**
+ * Server→extension message that reads a value off the page for browser_save_secret. It is not an
+ * MCP tool (the model never calls it) and the extension answers the value to the server only, so it
+ * is deliberately absent from the tool catalog. The cast is the only place it enters the ToolName-typed
+ * send(): the catalog-parity guard scans types.ts, which must not carry this internal name.
+ */
+const READ_SECRET_MESSAGE = 'browser_read_secret' as const;
+
+/** What the extension may say about browser_read_secret: a closed set, with texts that carry no page content. */
+const SECRET_TEXT: Record<string, string> = {
+  SECRET_NO_MATCH: 'No element matches the selector',
+  SECRET_AMBIGUOUS: 'Multiple elements match the selector',
+  SECRET_EMPTY: 'The element has no text',
+  SECRET_REGEX_INVALID: 'The regex is not valid or has no capture group',
+  SECRET_REGEX_NO_MATCH: 'The regex did not match',
+  SECRET_TOO_LARGE: 'The text is too large',
+};
+
+/** The value of a browser_read_secret answer, or the SaveError for what went wrong. Never the extension's own message. */
+function capturedValue(response: ExtensionResponse): string {
+  if (!response.success) {
+    const { code = '', message = '' } = response.error ?? {};
+    // Like browser_passkey: an extension that predates the message answers UNKNOWN_TOOL.
+    if (code === 'UNKNOWN_TOOL' || /Unknown tool/.test(message)) throw saveError('SAVE_SECRET_EXTENSION_TOO_OLD');
+    if (Object.hasOwn(SECRET_TEXT, code)) throw new SaveError(code, SECRET_TEXT[code]);
+    throw saveError('SAVE_SECRET_EXTENSION_ERROR');
+  }
+  const value = (response.result as { value?: unknown } | undefined)?.value;
+  if (typeof value !== 'string' || !value) throw saveError('SAVE_SECRET_EXTENSION_ERROR');
+  if (value.length > 4096) throw saveError('SAVE_SECRET_VALUE_TOO_LARGE');
+  return value;
+}
+
+function validateOtp(value: string): void {
+  const base32 = (seed: string) => /^[A-Z2-7]{16,128}(?:={1,6})?$/.test(seed) && [0, 2, 4, 5, 7].includes(seed.replace(/=+$/, '').length % 8);
+  if (!value.startsWith('otpauth://')) {
+    if (!base32(value)) throw saveError('SAVE_SECRET_VALUE_NOT_BASE32');
+    return;
+  }
+  try {
+    const uri = new URL(value);
+    const params = uri.searchParams;
+    const seed = params.get('secret') ?? '';
+    if (uri.hostname !== 'totp' || uri.username || uri.password || uri.port || uri.hash || uri.pathname.length < 2 || !base32(seed.toUpperCase()) || params.getAll('secret').length !== 1) throw new Error();
+    if ([...params.keys()].some((key) => params.getAll(key).length !== 1)) throw new Error();
+    if (params.has('algorithm') && !['SHA1', 'SHA256', 'SHA512'].includes(params.get('algorithm')!)) throw new Error();
+    if (params.has('digits') && !['6', '8'].includes(params.get('digits')!)) throw new Error();
+    if (params.has('period') && !/^[1-9]\d{0,5}$/.test(params.get('period')!)) throw new Error();
+  } catch { throw saveError('SAVE_SECRET_VALUE_NOT_BASE32'); }
+}
+
+const saveSecret = createTool({
+  name: 'browser_save_secret',
+  description: 'Copy a value shown on the page into a 1Password field without returning the value or its length. Available only with an explicitly configured Connect write token and vault ID allowlist. Pick ref/selector and/or an RE2 regex whose first capture group is the value (lookaround and backreferences are unsupported). destination: {vault, item, field}; creates an absent item. type "otp" accepts base32 seeds or valid otpauth://totp URIs. template is fixed text containing {value} exactly once, never a secret. Existing values require overwrite=true. Connect writes retain the current item version; rejected writes are not retried. Other browser reading tools can still reveal page content.',
+  schema: SAVE_SECRET_ARGS,
+  async handle(context, params) {
+    const { vault, item, field } = params.destination;
+    try {
+      // Plan §2 order: validate, configuration and allowlist, resolve vault and item (reads only), THEN read the page.
+      if (params.template !== undefined && params.template.split('{value}').length !== 2) throw saveError('SAVE_SECRET_TEMPLATE_INVALID');
+      if (params.regex !== undefined) {
+        try {
+          if (RE2JS.compile(params.regex).groupCount() < 1) throw new Error();
+        } catch { throw new SaveError('SECRET_REGEX_INVALID', SECRET_TEXT.SECRET_REGEX_INVALID); }
+      }
+      const plan = await planSave(params.destination, { type: params.type === 'otp' ? 'OTP' : 'CONCEALED', overwrite: params.overwrite });
+      const captured = capturedValue(await context.send(READ_SECRET_MESSAGE as ToolName, { ref: params.ref, selector: params.selector, regex: params.regex }));
+      let value = captured;
+      if (params.type === 'otp' && !value.startsWith('otpauth://')) {
+        // Seeds are shown in groups of four, sometimes lowercase; saving them as typed would give wrong codes without a warning.
+        value = value.replace(/[\s-]/g, '').toUpperCase();
+      }
+      // split/join, never String.replace: it would read `$&` or `$1` inside the value.
+      const stored = params.template === undefined ? value : params.template.split('{value}').join(value);
+      if (stored.length > 4096) throw saveError('SAVE_SECRET_VALUE_TOO_LARGE');
+      if (params.type === 'otp') validateOtp(stored);
+      await plan.write(stored);
+      logger.info(`[save_secret] vault=${vault} item=${item} field=${field}`);
+      return textResult(JSON.stringify({ saved: true, destination: { vault, item, field } }));
+    } catch (error) {
+      if (error instanceof SaveError) return errorResult(`${error.code}: ${error.message}`);
+      return errorResult(`SAVE_SECRET_EXTENSION_ERROR: ${saveError('SAVE_SECRET_EXTENSION_ERROR').message}`);
+    }
+  },
+});
+
+export const saveSecretTool: Tool = {
+  schema: saveSecret.schema,
+  // A destination that is missing or malformed gets the same code as every other bad destination.
+  handle: async (context, params) => {
+    try { requireSaveSecretConfigured(); }
+    catch (error) {
+      const e = error as SaveError;
+      return errorResult(`${e.code}: ${e.message}`);
+    }
+    return SAVE_SECRET_DESTINATION.safeParse(params?.destination).success
+      ? saveSecret.handle(context, params)
+      : errorResult(`SAVE_SECRET_INVALID_DESTINATION: ${saveError('SAVE_SECRET_INVALID_DESTINATION').message}`);
+  },
+};
+
 /** What the extension reports about a passkey ceremony: never the key nor the user handle. */
 interface PasskeyOutcome {
   mode: 'enroll' | 'use';
@@ -492,5 +596,6 @@ export const interactionTools: Tool[] = [
   dropTool,
   fillFormTool,
   fillSecretTool,
+  saveSecretTool,
   passkeyTool,
 ];
