@@ -263,3 +263,48 @@ describe('handshake auth', () => {
     expect(client.socket.readyState).toBe(WebSocket.OPEN);
   });
 });
+
+describe('timed-out requests', () => {
+  beforeEach(() => {
+    server = createWSServer({
+      port: 0,
+      host: '127.0.0.1',
+      tokenStore: createTokenStore(join(tempDir, 'tokens.json')),
+      requestTimeoutMs: 100,
+    });
+  });
+
+  it('retries browser_new_tab once with a fresh id and returns the late reply', async () => {
+    const extension = await connect(await serverPort(server!), { connectionId: 'chrome-a' }, false);
+    extension.socket.on('message', (data) => {
+      // The first attempt's reply is lost; the retry is answered.
+      if (extension.messages.length === 2) {
+        extension.socket.send(JSON.stringify({
+          id: extension.messages[1]!.id,
+          success: true,
+          result: { tab: { id: 7 } },
+        }));
+      }
+    });
+
+    const response = await server!.sendTo('chrome-a', message('browser_new_tab'));
+
+    expect(response.success).toBe(true);
+    expect(extension.messages).toHaveLength(2);
+    expect(extension.messages[1]!.id).not.toBe(extension.messages[0]!.id);
+  });
+
+  it('never repeats a click, and says the tab is unknown after two timed-out tabs', async () => {
+    const extension = await connect(await serverPort(server!), { connectionId: 'chrome-a' }, false);
+
+    await expect(server!.sendTo('chrome-a', message('browser_click'))).rejects.toThrow(
+      /timed out: browser_click/,
+    );
+    expect(extension.messages).toHaveLength(1);
+
+    await expect(server!.sendTo('chrome-a', message('browser_new_tab'))).rejects.toThrow(
+      /current tab is unknown[\s\S]*browser_list_tabs/,
+    );
+    expect(extension.messages).toHaveLength(3);
+  });
+});
