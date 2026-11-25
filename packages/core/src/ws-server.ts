@@ -7,7 +7,7 @@
  * single open one).
  */
 import { WebSocketServer, WebSocket } from 'ws';
-import { timingSafeEqual } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import { logger } from './utils/logger.js';
 import { getSharedTokenStore, type TokenStore } from './token-store.js';
 import { ConnectionRegistry, type ManagedConnection } from './connection-registry.js';
@@ -20,6 +20,8 @@ export interface WSServerOptions {
   onConnection?: (ws: WebSocket, connectionId: string) => void;
   onDisconnection?: (connectionId: string) => void;
   onMessage?: (message: ExtensionResponse) => void;
+  /** How long a request waits for the extension's reply (default 30 s). */
+  requestTimeoutMs?: number;
   /** Liveness watchdog tuning; defaults are for the real extension (25 s heartbeats). */
   liveness?: {
     /** Silence after which an open-but-unanswered connection is evicted (default 90 s). */
@@ -32,6 +34,27 @@ export interface WSServerOptions {
 /** The extension heartbeats every 25 s; 90 s of silence is > 3 missed beats. */
 const DEFAULT_LIVENESS_DEADLINE_MS = 90_000;
 const DEFAULT_LIVENESS_CHECK_INTERVAL_MS = 15_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * A repeat of these is harmless, so a timeout — the reply got lost, not the
+ * effect — is retried once. Anything that can act twice (click, type, navigate,
+ * close) is never retried.
+ */
+const RETRY_ON_TIMEOUT = new Set<string>([
+  'browser_new_tab',
+  'browser_list_tabs',
+  'browser_state',
+  'browser_snapshot',
+  'browser_find',
+  'browser_get_text',
+  'browser_get_html',
+  'browser_get_console_logs',
+  'browser_screenshot',
+  'browser_is_visible',
+  'browser_network_requests',
+  'browser_pdf',
+]);
 
 export interface HandshakeParams {
   token: string | null;
@@ -109,6 +132,7 @@ export function createWSServer(options: WSServerOptions): WSServer {
   // Now: loopback by default, and a token (static BROWSER_WS_TOKEN or one issued
   // by the pairing page) is required whenever auth is enabled.
   const host = options.host || process.env.BROWSER_WS_HOST || '127.0.0.1';
+  const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
   function authorize(token: string | null): boolean {
     if (!isAuthEnabled()) return true;
@@ -276,7 +300,7 @@ export function createWSServer(options: WSServerOptions): WSServer {
     }
   }
 
-  function sendTo(
+  function sendOnce(
     connectionId: string | undefined,
     message: ExtensionMessage,
   ): Promise<ExtensionResponse> {
@@ -295,7 +319,7 @@ export function createWSServer(options: WSServerOptions): WSServer {
         logger.error(`[WS] TIMEOUT for id: ${message.id}, type: ${message.type}`);
         pendingRequests.delete(message.id);
         reject(new Error(`Request timed out: ${message.type}`));
-      }, 30000);
+      }, requestTimeoutMs);
 
       pendingRequests.set(message.id, { resolve, reject, timeout });
       registry.markUsed(target.connectionId);
@@ -305,6 +329,37 @@ export function createWSServer(options: WSServerOptions): WSServer {
       logger.info('[WS] Sending JSON length:', jsonStr.length);
       target.ws.send(jsonStr);
     });
+  }
+
+  /**
+   * A timed-out request leaves the session without an answer, and the next
+   * command would land on whatever tab that connection has active — another
+   * session's, on a shared browser (INFRA-1589). So a harmless request is
+   * repeated once with a new id, and when that also times out the error says
+   * the tab is unknown instead of letting the caller act blindly.
+   */
+  async function sendTo(
+    connectionId: string | undefined,
+    message: ExtensionMessage,
+  ): Promise<ExtensionResponse> {
+    try {
+      return await sendOnce(connectionId, message);
+    } catch (error) {
+      const timedOut = error instanceof Error && error.message === `Request timed out: ${message.type}`;
+      if (!timedOut || !RETRY_ON_TIMEOUT.has(message.type)) throw error;
+      logger.warn(`[WS] Retrying ${message.type} once after timeout`);
+      try {
+        return await sendOnce(connectionId, { ...message, id: randomUUID() });
+      } catch (retryError) {
+        if (retryError instanceof Error && retryError.message === `Request timed out: ${message.type}`) {
+          throw new Error(
+            `${message.type} timed out twice (${requestTimeoutMs / 1000} s each); the current tab is unknown. ` +
+              'Do not act on the active tab: call browser_list_tabs and pick the tab explicitly.',
+          );
+        }
+        throw retryError;
+      }
+    }
   }
 
   return {
