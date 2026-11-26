@@ -111,7 +111,9 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
   let sessionTabs!: SessionTabs;
   const tabReaper = createTabReaper({
     idleMs: idleMinutesFromEnv() * 60_000,
-    send: (connectionId, type, payload) => context.send(type, payload ?? {}, connectionId),
+    // Through sessionTabs.system so the reaper's closes are observed (the session's tab entry is dropped).
+    // alreadyExclusive: the reaper runs its closes inside its own exclusive (the same queue) — re-queueing here would deadlock.
+    send: (connectionId, type, payload) => sessionTabs.system(context, connectionId, true).send(type, payload ?? {}, connectionId),
     listConnections: () => context.listConnections(),
     exclusive: (connectionId, run) => sessionTabs.exclusive(connectionId, run),
   });
