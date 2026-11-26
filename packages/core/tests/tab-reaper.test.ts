@@ -375,6 +375,23 @@ describe('tab reaper: windows', () => {
     expect(reaper.tracked().map((t) => t.tabId)).toEqual([102]);
   });
 
+  it('a new_tab without windowId opens in the session window, not a new window (INFRA-1608)', async () => {
+    const first = await call('s1', 'browser_new_tab', { url: 'https://shop.example/' });
+    const windowId = (first.result as { windowId: number }).windowId;
+    const second = await call('s1', 'browser_new_tab', { url: 'https://shop.example/two' });
+
+    const payloads = browser.sent.filter((m) => m.type === 'browser_new_tab').map((m) => m.payload);
+    expect(payloads[0].windowId).toBeUndefined();
+    expect(payloads[1].windowId).toBe(windowId);
+    expect((second.result as { windowId: number }).windowId).toBe(windowId);
+
+    // Another session keeps its own window.
+    await call('s2', 'browser_new_tab', { url: 'https://bank.example/' });
+    const all = browser.sent.filter((m) => m.type === 'browser_new_tab').map((m) => m.payload);
+    expect(all).toHaveLength(3);
+    expect(all[2].windowId).toBeUndefined();
+  });
+
   it('closes the window after an hour idle, not before', async () => {
     await call('s1', 'browser_new_tab', { url: 'https://shop.example/' });
     clock = HOUR - 1;
