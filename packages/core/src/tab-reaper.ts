@@ -14,7 +14,8 @@
  * On a browser that gives each session a window of its own (`closeWindow` in the listing), a
  * window whose tracked tabs are all due closes in one piece with `browser_close_window`; one
  * that also holds a tab we did not open, or a tab still wanted (keepOpenMinutes), loses only the
- * due tabs.
+ * due tabs. A `browser_new_tab` carries the window of the session's tracked tabs, so its tabs
+ * open together in one window instead of the extension opening a new window for each.
  *
  * Chrome reuses tab ids after a restart, so a tab is closed only after the browser lists it
  * with the URL last seen for it: across a reconnection a different URL under the same id is
@@ -204,6 +205,18 @@ export function createTabReaper(options: TabReaperOptions): TabReaper {
     }
   }
 
+  /** The window this session's tabs live in (newest tracked tab that knows it), for window reuse. */
+  function windowOf(sessionId: string, connectionId: string): number | undefined {
+    let best: TrackedTab | undefined;
+    for (const tab of tabs.values()) {
+      if (tab.sessionId === sessionId && tab.connectionId === connectionId && tab.windowId !== undefined &&
+          (best === undefined || tab.lastUsed > best.lastUsed)) {
+        best = tab;
+      }
+    }
+    return best?.windowId;
+  }
+
   function track(
     context: Context,
     sessionId: string | undefined,
@@ -214,6 +227,13 @@ export function createTabReaper(options: TabReaperOptions): TabReaper {
     return {
       ...context,
       send: async (type, payload = {}, ...rest) => {
+        // Without a windowId the extension opens a whole new window per tab (INFRA-1608):
+        // send the session's own window so its tabs share one. A stale id is harmless — the
+        // extension finds no live record for it and opens a fresh window, which is then tracked.
+        if (type === 'browser_new_tab' && payload.windowId === undefined) {
+          const known = windowOf(sessionId, connectionId);
+          if (known !== undefined) payload = { ...payload, windowId: known };
+        }
         const named = typeof payload.tabId === 'number'
           ? payload.tabId
           : typeof payload.targetTabId === 'number' ? payload.targetTabId : undefined;
