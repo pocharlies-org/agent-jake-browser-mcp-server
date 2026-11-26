@@ -34,7 +34,6 @@ const NOT_ROUTED = new Set<ToolName>([
   'browser_new_tab',
   'browser_switch_tab',
   'browser_list_tabs',
-  'browser_find_tab',
   'browser_wait',
 ] as ToolName[]);
 

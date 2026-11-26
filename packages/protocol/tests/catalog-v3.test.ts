@@ -26,7 +26,7 @@ describe('catalog v2 is frozen, v3 only adds', () => {
     expect(TOOL_CATALOG.slice(0, 40)).toEqual([...TOOL_CATALOG_V2]);
     expect(TOOL_CATALOG.slice(40).map((t) => t.name)).toEqual([
       'browser_fill_secret', 'browser_passkey',
-      'browser_find_tab', 'browser_close_window', 'browser_claim_tab',
+      'browser_close_window', 'browser_claim_tab',
     ]);
     expect(CATALOG_VERSION).not.toBe(V2_DIGEST);
     expect(CATALOG_VERSION).toBe(computeCatalogDigest(TOOL_CATALOG));
