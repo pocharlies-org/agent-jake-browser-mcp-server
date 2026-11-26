@@ -21,7 +21,9 @@ function fakeBrowser() {
     }
     if (type === 'browser_new_tab') {
       const id = state.nextId++; state.open.add(id); state.connected = id;
-      return { id: '', success: true, result: { tab: { id, url: String(payload.url), connected: true } } };
+      // The real extension opens a background tab and reports connected:false at first (INFRA-1606):
+      // the session must still adopt the tab it opened.
+      return { id: '', success: true, result: { tab: { id, url: String(payload.url), connected: false } } };
     }
     if (type === 'browser_switch_tab') { state.connected = payload.tabId as number; return { id: '', success: true, result: {} }; }
     if (type === 'browser_close_tab') {
@@ -161,7 +163,7 @@ describe('session windows', () => {
           const windowId = windowCreated ? nextWindow++ : asked!;
           liveWindows.add(windowId);
           const id = nextId++;
-          return ok({ tab: { id, url: String(payload.url), connected: true, windowId }, windowId, windowCreated });
+          return ok({ tab: { id, url: String(payload.url), connected: false, windowId }, windowId, windowCreated });
         }
         return ok({ ok: true });
       },

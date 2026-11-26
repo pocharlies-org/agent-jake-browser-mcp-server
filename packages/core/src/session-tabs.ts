@@ -113,9 +113,13 @@ export function createSessionTabs(ownership?: TabOwnership): SessionTabs {
       return;
     }
     if (type === 'browser_new_tab') {
-      const tab = (result.tab ?? {}) as { id?: number; connected?: boolean };
+      // The tab a session opens is its own the moment it exists, whether or not the extension has
+      // attached the debugger yet: it opens background tabs and reports connected:false at first, and
+      // gating adoption on that left the session without a tab, so its next command carried no
+      // targetTabId and landed in another session's connected tab (INFRA-1606).
+      const tab = (result.tab ?? {}) as { id?: number };
       const tabId = tab.id ?? (result.tabId as number | undefined);
-      if (typeof tabId === 'number' && tab.connected !== false) adopt(sessionId, connectionId, tabId);
+      if (typeof tabId === 'number') adopt(sessionId, connectionId, tabId);
     } else if (type === 'browser_switch_tab' && typeof payload.tabId === 'number') {
       adopt(sessionId, connectionId, payload.tabId);
     } else if (type === 'browser_close_tab') {
