@@ -312,7 +312,6 @@ export function createTabReaper(options: TabReaperOptions): TabReaper {
     let closed = 0;
 
     const due: TrackedTab[] = [];
-    const staying: TrackedTab[] = [];
     for (const tab of mine) {
       const url = open.get(tab.tabId);
       if (url === undefined) {
@@ -330,7 +329,6 @@ export function createTabReaper(options: TabReaperOptions): TabReaper {
       } else {
         tab.url = url;
         tab.connectedAt = connection.connectedAt;
-        staying.push(tab);
       }
     }
     // Stays tracked: it closes once the browser runs a build that can.

@@ -10,8 +10,8 @@ Only the tool set. Frames, state machine, identity, limits and errors are v2's, 
 
 | | v2 | v3 |
 | --- | --- | --- |
-| catalog | `TOOL_CATALOG_V2`, 40 tools | `TOOL_CATALOG` = v2 unchanged + `browser_fill_secret` + `browser_passkey` (42 tools) |
-| catalog digest (`CATALOG_VERSION`) | `sha256:f7e7d2f5178afea3caa13fd262b7e1c81afe94cf550bbaceea3bd30e25cfe9b5` (`CATALOG_VERSION_V2`) | `sha256:5fdec80d1e86acd7feb6dd800cb446a79130346caa456191371397794acee7f2` |
+| catalog | `TOOL_CATALOG_V2`, 40 tools | `TOOL_CATALOG` = v2 unchanged + `browser_fill_secret` + `browser_passkey` + `browser_find_tab` + `browser_close_window` + `browser_claim_tab` (45 tools) |
+| catalog digest (`CATALOG_VERSION`) | `sha256:f7e7d2f5178afea3caa13fd262b7e1c81afe94cf550bbaceea3bd30e25cfe9b5` (`CATALOG_VERSION_V2`) | `sha256:45c70ee0c7164b34be43e83a7c6c66594d092fe9bedbc2c39249acf6869a2c0e` |
 | wire version in the hello | `1` | `1` (the digest, not the wire integer, names the tool set) |
 
 The hello compares the digest by exact equality (v2, unchanged): a browser that vendored the v2 catalog is rejected with

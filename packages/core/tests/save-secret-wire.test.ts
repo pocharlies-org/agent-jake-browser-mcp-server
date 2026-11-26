@@ -66,8 +66,8 @@ afterEach(async () => {
 const save = (params: Record<string, unknown> = {}) => tool.handle(context.forConnection(undefined), { selector: '#semilla', destination, ...params });
 const writes = () => fake.requests.filter((r) => r.method !== 'GET');
 
-// The fork's two session-tab cases (session-owned tab, foreign tab) are not ported: the
-// canonical has no session-tabs module (src/session-tabs.ts is fork-only, INFRA-908 territory).
+// The fork's two session-tab cases (session-owned tab, foreign tab) are not ported here: session
+// tab routing and ownership are covered by session-tabs.test.ts and ownership.test.ts.
 describe('browser_save_secret through the WebSocket server', () => {
   it('asks the extension only for the value, and the value reaches 1Password and nothing else', async () => {
     const r = await save();
