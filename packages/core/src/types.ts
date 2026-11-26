@@ -31,9 +31,12 @@ export type ToolName =
   // Tab management
   | 'browser_new_tab'
   | 'browser_list_tabs'
+  | 'browser_find_tab'
   | 'browser_switch_tab'
   | 'browser_send_to_back'
   | 'browser_close_tab'
+  // Internal (server -> extension, never an MCP tool): close an agent window
+  | 'browser_close_window'
   // Element queries
   | 'browser_get_text'
   | 'browser_get_attribute'
@@ -139,6 +142,11 @@ export interface Context {
   isConnected(connectionId?: string): boolean;
   listConnections(): BrowserConnectionInfo[];
   waitForConnection?(timeout?: number): Promise<void>;
+  /**
+   * browser_claim_tab: take over a tab another session opened. Only the HTTP transport provides it
+   * (src/session-tabs.ts); without it there are no sessions to hand tabs between.
+   */
+  claimTab?(tabId: number): Promise<{ ok: true } | { ok: false; message: string }>;
 }
 
 /**

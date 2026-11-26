@@ -1,13 +1,26 @@
 /**
- * Tab management tools: newTab, listTabs, switchTab, closeTab.
+ * Tab management tools: newTab, listTabs, switchTab, claimTab, closeTab.
  */
 import { z } from 'zod';
 import { createTool, textResult, errorResult } from './types.js';
 import type { Tool } from '../types.js';
+import { MAX_KEEP_MINUTES } from '../tab-reaper.js';
+import { CLAIM_TAB_ARGS } from '@agent-jake-browser/protocol';
 
 const newTabResultSchema = z.object({
   tab: z.object({ id: z.number().int().nonnegative() }),
 });
+
+/** Handled by the server (src/tab-reaper.ts); never sent to the extension. */
+const KEEP_OPEN_MINUTES = z.number()
+  .int()
+  .min(1)
+  .max(MAX_KEEP_MINUTES)
+  .optional()
+  .describe(
+    `Keep this tab open for this many minutes even if your session ends or leaves it idle (max ${MAX_KEEP_MINUTES}). ` +
+    'Only for a tab that must outlive the session, such as a payment waiting for a person.',
+  );
 
 /**
  * Open a new tab.
@@ -24,6 +37,7 @@ export const newTabTool: Tool = createTool({
       .optional()
       .default(false)
       .describe('Bring the new tab to the front after opening it (default: false, stays in background)'),
+    keepOpenMinutes: KEEP_OPEN_MINUTES,
   }),
   async handle(context, params) {
     const response = await context.send('browser_new_tab', {
@@ -96,6 +110,7 @@ export const switchTabTool: Tool = createTool({
   description: 'Switch to a different browser tab by its ID.',
   schema: z.object({
     tabId: z.number().describe('ID of the tab to switch to'),
+    keepOpenMinutes: KEEP_OPEN_MINUTES,
   }),
   async handle(context, params) {
     const response = await context.send('browser_switch_tab', {
@@ -161,10 +176,29 @@ export const closeTabTool: Tool = createTool({
   },
 });
 
+/**
+ * Take over a tab another session opened. Answered by the server (src/session-tabs.ts): the next
+ * command already carries the tab as its target, so the extension has nothing to do.
+ */
+export const claimTabTool: Tool = createTool({
+  name: 'browser_claim_tab',
+  description:
+    'Take over a tab that another session opened, after a command on it answered TAB_OWNED. ' +
+    'The tab becomes yours and your session\'s current tab; the previous owner gets TAB_OWNED if it keeps using it. ' +
+    'Tabs nobody opened (the user\'s own) cannot be claimed: adopt them with browser_switch_tab.',
+  schema: CLAIM_TAB_ARGS,
+  async handle(context, params) {
+    if (!context.claimTab) return errorResult('browser_claim_tab needs an MCP session over the HTTP transport.');
+    const claimed = await context.claimTab(params.tabId);
+    return claimed.ok ? textResult(`Tab ${params.tabId} is now yours`) : errorResult(claimed.message);
+  },
+});
+
 export const tabTools: Tool[] = [
   newTabTool,
   listTabsTool,
   switchTabTool,
+  claimTabTool,
   sendToBackTool,
   closeTabTool,
 ];

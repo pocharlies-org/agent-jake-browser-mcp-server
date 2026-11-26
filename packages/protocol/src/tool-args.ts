@@ -66,3 +66,11 @@ export const SAVE_SECRET_ARGS = z
     overwrite: z.boolean().optional().default(false).describe('Replace a field that already has a value'),
   })
   .refine((data) => Boolean(data.ref || data.selector || data.regex), { message: 'ref, selector or regex must be provided' });
+
+/**
+ * Arguments of `browser_claim_tab` (INFRA-1606): take over a tab another session opened, after a command
+ * on it answered TAB_OWNED. Answered in the server process (session-tabs), never forwarded to the extension.
+ */
+export const CLAIM_TAB_ARGS = z.object({
+  tabId: z.number().describe('ID of the tab to take over (see browser_list_tabs)'),
+});

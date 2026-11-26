@@ -32,6 +32,13 @@ function connectExtension(http: HttpServer, connectionId: string, label?: string
   const messages: Array<Record<string, any>> = [];
   socket.on('message', (data) => {
     const m = JSON.parse(data.toString());
+    // The server probes browser_list_tabs once per connection to learn whether it gives each session a
+    // window. Internal routing noise, not a tool command: answer it as a plain browser (no windowPerSession)
+    // and keep it out of the recorded commands these routing assertions are about.
+    if (m.type === 'browser_list_tabs') {
+      socket.send(JSON.stringify({ id: m.id, success: true, result: { tabs: [], closeById: true } }));
+      return;
+    }
     messages.push(m);
     socket.send(JSON.stringify({ id: m.id, success: true, result: { ok: true } }));
   });

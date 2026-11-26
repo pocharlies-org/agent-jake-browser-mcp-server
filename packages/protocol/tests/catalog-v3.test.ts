@@ -22,9 +22,12 @@ describe('catalog v2 is frozen, v3 only adds', () => {
     expect(CATALOG_VERSION_V2).toBe(V2_DIGEST);
     expect(TOOL_CATALOG_V2).toHaveLength(40);
   });
-  it('v3 = v2 untouched + browser_fill_secret + browser_passkey, under a different digest', () => {
+  it('v3 = v2 untouched + fill_secret + passkey + the INFRA-1606 tab-routing tools, under a different digest', () => {
     expect(TOOL_CATALOG.slice(0, 40)).toEqual([...TOOL_CATALOG_V2]);
-    expect(TOOL_CATALOG.slice(40).map((t) => t.name)).toEqual(['browser_fill_secret', 'browser_passkey']);
+    expect(TOOL_CATALOG.slice(40).map((t) => t.name)).toEqual([
+      'browser_fill_secret', 'browser_passkey',
+      'browser_find_tab', 'browser_close_window', 'browser_claim_tab',
+    ]);
     expect(CATALOG_VERSION).not.toBe(V2_DIGEST);
     expect(CATALOG_VERSION).toBe(computeCatalogDigest(TOOL_CATALOG));
   });
