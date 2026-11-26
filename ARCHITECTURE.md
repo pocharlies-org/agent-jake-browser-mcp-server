@@ -46,8 +46,9 @@ esquemas de argumentos de las dos tools nuevas están en `packages/protocol/src/
 
 Endpoint legacy (sin versión, parser intacto) y endpoint **negociado** `/ws/harness` aparte; nunca se cae de uno
 al otro por timeout. `maxPayload` de 32 MiB (33 554 432 B) solo en el negociado. El binding de navegador es por
-sesión MCP; el core no elige por «último usado» en el endpoint negociado. La ventana por sesión y
-`browser_claim_tab` son de INFRA-413 (extensión), que consume `sessionId`/`tabHandle` de la petición.
+sesión MCP; el core no elige por «último usado» en el endpoint negociado. En el legacy, la pestaña (y la ventana)
+por sesión y `browser_claim_tab` los resuelve el core (`session-tabs.ts`, `tab-reaper.ts`); en el negociado son de
+INFRA-413 (extensión), que consume `sessionId`/`tabHandle` de la petición.
 
 ## 6. Tests
 

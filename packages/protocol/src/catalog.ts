@@ -75,6 +75,11 @@ export const TOOL_CATALOG: readonly ToolDescriptor[] = Object.freeze([
   // Reads a 1Password reference in the server process, then types it with browser_type: the extension never sees this name.
   d('browser_fill_secret', 'dangerous', 'tab', { serverSide: true }),
   d('browser_passkey', 'dangerous', 'tab', { capability: 'passkey' }),
+  // Per-session tab routing on the legacy endpoint (INFRA-1606). close_window is sent by the reaper to close an agent
+  // window, only on a browser that offers windowPerSession (not yet this extension); claim_tab is answered in the server
+  // (session-tabs), never forwarded to the extension.
+  d('browser_close_window', 'write', 'tabless', { capability: 'windowPerSession' }),
+  d('browser_claim_tab', 'write', 'tabless', { serverSide: true }),
 ]);
 
 export const TOOL_NAMES: readonly string[] = Object.freeze(TOOL_CATALOG.map((t) => t.name));

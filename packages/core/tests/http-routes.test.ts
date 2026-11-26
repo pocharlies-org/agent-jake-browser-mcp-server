@@ -180,6 +180,13 @@ function connectExtension(
   const messages: Array<Record<string, unknown>> = [];
   socket.on('message', (data) => {
     const message = JSON.parse(data.toString()) as Record<string, unknown>;
+    // The server probes browser_list_tabs once per connection to learn whether this extension gives
+    // each session its own window. It is internal routing noise, not a tool command: answer it as a
+    // plain browser (no windowPerSession) and keep it out of the recorded commands the tests assert on.
+    if (message.type === 'browser_list_tabs') {
+      socket.send(JSON.stringify({ id: message.id, success: true, result: { tabs: [], closeById: true } }));
+      return;
+    }
     messages.push(message);
     socket.send(JSON.stringify({ id: message.id, success: true, result: 'paged' }));
   });

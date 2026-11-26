@@ -20,6 +20,8 @@ import { createHarnessServer, type HarnessServer, type HarnessServerOptions } fr
 import { extensionZipPath, readPublishedVersion } from '../published-extension.js';
 import { findConnection, nameOf, parseLabels, resolveTarget } from '../connection-target.js';
 import { callToolViaHarness } from '../harness-routing.js';
+import { createSessionTabs, type SessionTabs } from '../session-tabs.js';
+import { createTabReaper, idleMinutesFromEnv } from '../tab-reaper.js';
 
 
 export interface HttpServerOptions {
@@ -101,6 +103,21 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
   const tokenStore = getSharedTokenStore();
   const allTools = getMcpTools();
   const toolMap = new Map(allTools.map((tool) => [tool.schema.name, tool]));
+
+  // Per-session tab routing + ownership for the LEGACY endpoint (the negotiated /ws/harness path routes
+  // tabs through the broker's tabHandle). The reaper is the single source of tab ownership; session-tabs
+  // reads it to refuse acting in another live session's tab (TAB_OWNED) and to route each command to the
+  // session's own tab (targetTabId). The negotiated endpoint never reaches these.
+  let sessionTabs!: SessionTabs;
+  const tabReaper = createTabReaper({
+    idleMs: idleMinutesFromEnv() * 60_000,
+    // Through sessionTabs.system so the reaper's closes are observed (the session's tab entry is dropped).
+    // alreadyExclusive: the reaper runs its closes inside its own exclusive (the same queue) — re-queueing here would deadlock.
+    send: (connectionId, type, payload) => sessionTabs.system(context, connectionId, true).send(type, payload ?? {}, connectionId),
+    listConnections: () => context.listConnections(),
+    exclusive: (connectionId, run) => sessionTabs.exclusive(connectionId, run),
+  });
+  sessionTabs = createSessionTabs({ ownerOf: tabReaper.ownerOf, claim: tabReaper.claim });
 
   const pairing = createPairingStore({
     issueToken: (record) =>
@@ -210,7 +227,16 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
     if (!target.ok) return textContent(target.error, true);
     if (target.sticky && sessionId) sessionDefaults.set(sessionId, target.connectionId);
 
-    return tool.handle(context.forConnection(target.connectionId), args);
+    // Any call by the session is use of its tabs; then route to the session's own tab and let the
+    // reaper see what this call opens/switches/closes (keepOpenMinutes holds a tab past the session).
+    tabReaper.touchSession(sessionId);
+    const keepOpenMinutes = typeof args.keepOpenMinutes === 'number' ? args.keepOpenMinutes : undefined;
+    const routed = sessionTabs.route(
+      tabReaper.track(context.forConnection(target.connectionId), sessionId, target.connectionId, keepOpenMinutes),
+      sessionId,
+      target.connectionId,
+    );
+    return tool.handle(routed, args);
   }
 
   function createMcpServer() {
@@ -505,6 +531,8 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
             servers.delete(transport.sessionId);
             sessionDefaults.delete(transport.sessionId);
             owners.delete(transport.sessionId);
+            sessionTabs.sessionClosed(transport.sessionId);
+            void tabReaper.sessionClosed(transport.sessionId);
             harness?.broker.closeSession(transport.sessionId);
           }
         };
@@ -544,7 +572,11 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
     }
     await transport.handleRequest(req, res, req.body);
     // DELETE is the logical end of the session. An SSE stream ending is not.
-    if (sessionId) sessionDefaults.delete(sessionId);
+    if (sessionId) {
+      sessionDefaults.delete(sessionId);
+      sessionTabs.sessionClosed(sessionId);
+      void tabReaper.sessionClosed(sessionId);
+    }
     if (harness && sessionId) {
       owners.delete(sessionId);
       harness.broker.closeSession(sessionId);
@@ -553,6 +585,7 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
 
 
   let listener: HttpListener | undefined;
+  let sweepTimer: NodeJS.Timeout | undefined;
   return {
     app,
     context,
@@ -566,12 +599,16 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
           else resolve(pending);
         });
       });
+      // The reaper's idle timeout has no event to react to: this is its GC tick (one listing per browser).
+      // shortcut: 60s cadence is coarser than a sub-minute AGENT_BROWSER_TAB_IDLE_MINUTES; raise it if such a value is ever set.
+      sweepTimer ??= setInterval(() => { void tabReaper.sweep(); }, 60_000);
       console.error(`Agent Jake Browser MCP HTTP endpoint on ${HTTP_HOST}:${PORT}/mcp`);
       console.error(`Agent Jake Browser extension WebSocket on ${process.env.BROWSER_WS_HOST || '127.0.0.1'}:${WS_PORT}`);
       console.error(`Extension download: ${extensionZip()} (served at /download, version at /download/latest.json)`);
       return listener;
     },
     async close() {
+      if (sweepTimer) { clearInterval(sweepTimer); sweepTimer = undefined; }
       await Promise.all([...servers.values()].map((server) => server.close()));
       await Promise.all([...transports.values()].map((transport) => transport.close()));
       if (listener) {
