@@ -389,6 +389,51 @@ describe('tools/call through an MCP session', () => {
     extension.socket.close();
   }, 30000);
 
+  it('honours an explicit tabId on a routed command instead of the session\'s own tab (INFRA-1614)', async () => {
+    // A browser that answers new_tab with a real tab id, so the session adopts a tab of its own.
+    const query = new URLSearchParams({ token: pairedToken, connectionId: 'chrome-explicit' });
+    const socket = new WebSocket(`${primary.wsBase}/?${query.toString()}`);
+    const messages: Array<Record<string, unknown>> = [];
+    socket.on('message', (data) => {
+      const message = JSON.parse(data.toString()) as Record<string, unknown>;
+      if (message.type === 'browser_list_tabs') {
+        socket.send(JSON.stringify({ id: message.id, success: true, result: { tabs: [{ id: 1, url: 'https://user.test' }] } }));
+        return;
+      }
+      messages.push(message);
+      const result = message.type === 'browser_new_tab'
+        ? { tab: { id: 500, url: String((message.payload as { url?: string } | undefined)?.url ?? '') } }
+        : 'paged';
+      socket.send(JSON.stringify({ id: message.id, success: true, result }));
+    });
+    await new Promise<void>((resolve, reject) => {
+      socket.on('open', () => resolve());
+      socket.on('error', reject);
+      socket.on('unexpected-response', (_req, res) => reject(new Error(`HTTP ${res.statusCode}`)));
+    });
+    await expect
+      .poll(async () => ((await request(primary, 'GET', '/connections')).json.connections as Array<{ connectionId: string }>)
+        .some((c) => c.connectionId === 'chrome-explicit'))
+      .toBe(true);
+
+    // The session's own tab becomes 500; the user's tab 1 stays unowned and adoptable.
+    await mcpCall('browser_new_tab', { url: 'https://a.test', connection: 'chrome-explicit' });
+    await mcpCall('browser_evaluate', { code: 'location.href', tabId: 1, connection: 'chrome-explicit' });
+
+    const evaluate = messages.find((m) => m.type === 'browser_evaluate');
+    expect(evaluate, 'browser_evaluate never reached the extension').toMatchObject({
+      payload: { code: 'location.href', targetTabId: 1 },
+    });
+
+    // The explicit target is one-shot: the next unnamed command goes back to the session's own tab.
+    await mcpCall('browser_evaluate', { code: '1', connection: 'chrome-explicit' });
+    expect(messages.filter((m) => m.type === 'browser_evaluate')[1]).toMatchObject({
+      payload: { code: '1', targetTabId: 500 },
+    });
+
+    socket.close();
+  }, 30000);
+
   it('reports an unknown connection id instead of guessing', async () => {
     const result = await mcpCall('browser_navigate', {
       url: 'https://example.com',
