@@ -20,7 +20,7 @@ import { createHarnessServer, type HarnessServer, type HarnessServerOptions } fr
 import { extensionZipPath, readPublishedVersion, PUBLISHED_ZIP_NAME } from '../published-extension.js';
 import { findConnection, nameOf, parseLabels, resolveTarget } from '../connection-target.js';
 import { callToolViaHarness } from '../harness-routing.js';
-import { createSessionTabs, type SessionTabs } from '../session-tabs.js';
+import { acceptsExplicitTab, createSessionTabs, type SessionTabs } from '../session-tabs.js';
 import { createTabReaper, idleMinutesFromEnv } from '../tab-reaper.js';
 
 
@@ -231,10 +231,15 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
     // reaper see what this call opens/switches/closes (keepOpenMinutes holds a tab past the session).
     tabReaper.touchSession(sessionId);
     const keepOpenMinutes = typeof args.keepOpenMinutes === 'number' ? args.keepOpenMinutes : undefined;
+    // A routed command may name its tab with `tabId`; the tool's own schema does not declare it,
+    // so take it out before the handler's zod strips it (INFRA-1614: explicitTabId was dead code).
+    const explicitTabId = acceptsExplicitTab(name) && typeof args.tabId === 'number' ? args.tabId : undefined;
+    if (explicitTabId !== undefined) delete args.tabId;
     const routed = sessionTabs.route(
       tabReaper.track(context.forConnection(target.connectionId), sessionId, target.connectionId, keepOpenMinutes),
       sessionId,
       target.connectionId,
+      { explicitTabId },
     );
     return tool.handle(routed, args);
   }

@@ -50,7 +50,7 @@ export interface TabOwnership {
 const NAMES_TAB = new Set<ToolName>(['browser_switch_tab', 'browser_close_tab', 'browser_send_to_back'] as ToolName[]);
 
 /** Whether a command may carry an explicit `tabId` that is not part of its own arguments. */
-function acceptsExplicitTab(type: string): boolean {
+export function acceptsExplicitTab(type: string): boolean {
   return !NOT_ROUTED.has(type as ToolName) && !NAMES_TAB.has(type as ToolName) && type !== 'browser_claim_tab';
 }
 
