@@ -62,13 +62,20 @@ describe('GET /download/latest.json and /download', () => {
     expect((await fetch(`${base}/download/latest.json`)).status).toBe(404);
   });
 
-  it('serves the published build, uncached, readable from the extension origin, and points at /download', async () => {
+  it('serves the published build, uncached, readable from the extension origin, and points at the update artifact', async () => {
     writeFileSync(join(published, 'latest.json'), JSON.stringify(LATEST));
     const res = await fetch(`${base}/download/latest.json`);
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-cache');
     expect(res.headers.get('access-control-allow-origin')).toBe('*');
-    expect(await res.json()).toEqual({ ...LATEST, download: '/download' });
+    expect(await res.json()).toEqual({ ...LATEST, download: '/download/artifact.zip' });
+  });
+
+  it('/download/artifact.zip is a JSON 404 while nothing is published (no image fallback)', async () => {
+    const res = await fetch(`${base}/download/artifact.zip`);
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toMatch(/application\/json/);
+    expect(await res.json()).toEqual({ error: 'no extension artifact published on this server' });
   });
 
   it('/download serves the published zip as soon as it appears, without a restart', async () => {
@@ -76,5 +83,23 @@ describe('GET /download/latest.json and /download', () => {
     const res = await fetch(`${base}/download`);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('published-zip-bytes');
+  });
+
+  it('/download/artifact.zip serves the published bytes untouched, even with BROWSER_PUBLIC_WS_URL set', async () => {
+    const prevWs = process.env.BROWSER_PUBLIC_WS_URL;
+    process.env.BROWSER_PUBLIC_WS_URL = 'wss://browser-mcp.example/ws';
+    try {
+      const bytes = Buffer.from([0x50, 0x4b, 0x05, 0x06, ...Array(18).fill(0)]);
+      writeFileSync(join(published, PUBLISHED_ZIP_NAME), bytes);
+      const res = await fetch(`${base}/download/artifact.zip`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('application/zip');
+      expect(res.headers.get('cache-control')).toBe('no-cache');
+      expect(res.headers.get('access-control-allow-origin')).toBe('*');
+      expect(Buffer.from(await res.arrayBuffer()).equals(bytes)).toBe(true);
+    } finally {
+      if (prevWs === undefined) delete process.env.BROWSER_PUBLIC_WS_URL;
+      else process.env.BROWSER_PUBLIC_WS_URL = prevWs;
+    }
   });
 });

@@ -150,6 +150,7 @@ can also carry private data, so use these tools only with trusted MCP clients.
 | `GET /` | Small page with the download link, the pairing link and the live connection list. |
 | `GET /download` | Serves the extension zip (`BROWSER_EXTENSION_ZIP`, else the one published in `BROWSER_EXTENSION_DIR`, else the image's). |
 | `GET /download/latest.json` | The published extension build `{version, build, sha, publishedAt, download}`; `404` when none was published. Read by installed extensions to tell their user a newer build exists. |
+| `GET /download/artifact.zip` | The published zip from `BROWSER_EXTENSION_DIR`, byte for byte (no `config.json` injection, no image fallback): what the installed extensions' self-update and the headless engine download and verify against the signed listing. JSON `404` when none was published. |
 | `GET /connections` | JSON: auth status, derived wsUrl and the current connections. |
 | `POST /pair/start` | Extension registers a one-time code (`{otp, connectionId?, label?}`), valid 10 minutes. |
 | `GET /pair` | Approval page, prefilled from `?otp=`. |
