@@ -17,7 +17,7 @@ import { getSharedTokenStore } from '../token-store.js';
 import { createPairingStore } from '../pairing-store.js';
 import { patchZipConfig } from '../extension-zip.js';
 import { createHarnessServer, type HarnessServer, type HarnessServerOptions } from '../harness-server.js';
-import { extensionZipPath, readPublishedVersion } from '../published-extension.js';
+import { extensionZipPath, readPublishedVersion, PUBLISHED_ZIP_NAME } from '../published-extension.js';
 import { findConnection, nameOf, parseLabels, resolveTarget } from '../connection-target.js';
 import { callToolViaHarness } from '../harness-routing.js';
 import { createSessionTabs, type SessionTabs } from '../session-tabs.js';
@@ -359,7 +359,24 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (!latest) return res.status(404).json({ error: 'no extension build published on this server' });
-    return res.json({ ...latest, download: '/download' });
+    return res.json({ ...latest, download: '/download/artifact.zip' });
+  });
+
+  // Updates consume the signed bytes exactly as the extension CI published them: no config.json
+  // injection (that belongs only to the initial /download) and never the image's fallback zip.
+  // The installed extensions' update check and the headless engine both fetch this path.
+  app.get('/download/artifact.zip', async (_req, res) => {
+    const file = path.join(EXTENSION_DIR, PUBLISHED_ZIP_NAME);
+    try {
+      const info = await stat(file);
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Length', String(info.size));
+      createReadStream(file).on('error', () => res.destroy()).pipe(res);
+    } catch {
+      res.status(404).json({ error: 'no extension artifact published on this server' });
+    }
   });
 
   app.get('/download', async (_req, res) => {
@@ -604,7 +621,7 @@ export function createHttpServer(options: HttpServerOptions = {}): HttpServer {
       sweepTimer ??= setInterval(() => { void tabReaper.sweep(); }, 60_000);
       console.error(`Agent Jake Browser MCP HTTP endpoint on ${HTTP_HOST}:${PORT}/mcp`);
       console.error(`Agent Jake Browser extension WebSocket on ${process.env.BROWSER_WS_HOST || '127.0.0.1'}:${WS_PORT}`);
-      console.error(`Extension download: ${extensionZip()} (served at /download, version at /download/latest.json)`);
+      console.error(`Extension download: ${extensionZip()} (served at /download, update artifact at /download/artifact.zip, version at /download/latest.json)`);
       return listener;
     },
     async close() {
