@@ -13,11 +13,9 @@ export function createTool<T extends z.ZodType>(options: {
   schema: T;
   /** Answered without a browser, so callers must not wait for a connection. */
   serverSide?: boolean;
-  /** Plugin: answered by a service outside the browser (INFRA-909); no `connection` argument. */
-  external?: boolean;
   handle: (context: Context, params: z.infer<T>) => Promise<ToolResult>;
 }): Tool {
-  const { name, description, schema, handle, serverSide, external } = options;
+  const { name, description, schema, handle, serverSide } = options;
 
   const inputSchema = z.toJSONSchema(schema, {
     io: 'input',
@@ -36,7 +34,6 @@ export function createTool<T extends z.ZodType>(options: {
   return {
     schema: toolSchema,
     ...(serverSide ? { serverSide: true } : {}),
-    ...(external ? { external: true } : {}),
     async handle(context: Context, params?: Record<string, unknown>): Promise<ToolResult> {
       // Validate input
       const parsed = schema.safeParse(params ?? {});
