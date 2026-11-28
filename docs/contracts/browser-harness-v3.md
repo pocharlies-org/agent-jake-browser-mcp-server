@@ -41,3 +41,28 @@ The negotiated endpoint binds per MCP session through the `SessionBroker`, exact
 `browser_selection_required`). `AGENT_BROWSER_CONNECTION_LABELS` and `AGENT_BROWSER_DEFAULT_CONNECTION` do **not** apply
 here: connection ids are server-issued per socket and a browser's label is only its own claim, so neither is an identity the
 server can verify. They apply to the legacy endpoint (deprecated v1 surface), where connection ids are stable.
+
+## Per-session tab routing (`targetTabId`)
+
+The legacy endpoint (the deprecated v1 surface: `POST/GET/DELETE /mcp` plus the extension's plain WebSocket) routes each MCP
+session to its own tab on a shared browser (`packages/core/src/session-tabs.ts`; tab ownership lives in
+`packages/core/src/tab-reaper.ts`). A routed command carries that tab in the `tool_request` payload as `targetTabId`: the
+session's own tab (`session-tabs.ts`, `route`), or the tab the caller named with the optional `tabId` argument.
+
+`targetTabId` is routing metadata from server to extension, not a tool argument:
+
+- It is in no tool's argument schema, not in the vendored protocol pack, and not in the MCP arguments. The caller names the
+  target with `tabId` on commands that do not carry one of their own (`acceptsExplicitTab`); the server deletes it from the
+  arguments and turns it into `targetTabId` on the wire (INFRA-1614).
+- The extension strips `targetTabId` from the payload before parsing it (agent-browser-extension, `routeToTargetTab`), so no
+  tool's argument parser ever sees the field.
+- The tab reaper counts a command carrying `targetTabId` as use of that tab, and its protections apply to a tab routed this
+  way: the URL-check before closing, the `closeById` echo, the `exclusive()` serialization and `keepUntil`
+  (the `keepOpenMinutes` hold).
+
+The field is additive and compatible in both directions. An old extension does not know it, ignores it and runs the command
+on the tab it has connected, which is the one-tab behavior from before session routing. A new extension that receives a
+command without it passes the payload through as before. So it bumps no protocol version (`SUPPORTED_PROTOCOL_VERSIONS`
+stays `[1]`), changes no catalog digest and adds no schema to the pack, whose bytes are pinned by
+`packages/protocol/tests/artifact.test.ts`. The negotiated endpoint, the surface of this document, never carries it: it
+routes tabs through the broker's `tabHandle` (see the wiring comment in `packages/core/src/http/server.ts`).
