@@ -32,6 +32,11 @@ error?: { code: string, message: string } }`. Heartbeat messages with
 `type: 'heartbeat'` are accepted separately. M1A preserves the current correlation
 and selection behavior; session binding belongs to M1B.
 
+Since INFRA-413 the server may add `targetTabId` to a `tool_request` payload on this wire: routing metadata telling the
+extension which tab to attach to before it parses the payload. The extension strips it before parsing, and an extension that
+does not know the field ignores it. It is not a tool argument and adds no behavior to this wire; its contract is documented
+in "Per-session tab routing (`targetTabId`)" in [`browser-harness-v3.md`](browser-harness-v3.md).
+
 ## MCP and selection
 
 Both transports expose MCP `tools/list` and `tools/call` with standard JSON-RPC
